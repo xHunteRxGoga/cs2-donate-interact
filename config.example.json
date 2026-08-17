@@ -1,0 +1,89 @@
+{
+  "general": {
+    "enabled": true,
+    "require_cs2_running": true,
+    "require_cs2_focused": false,
+    "queue_mode": "queue",
+    "max_queue": 5,
+    "global_cooldown_sec": 8,
+    "amount_mode": "exact",
+    "currency": "RUB",
+    "kill_switch": "alt+5",
+    "panic_hotkey": "ctrl+alt+5"
+  },
+  "donationalerts": {
+    "access_token": "",
+    "client_id": "",
+    "client_secret": "",
+    "redirect_uri": "http://127.0.0.1:53682/callback",
+    "mode": "websocket"
+  },
+  "webhook": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 8765
+  },
+  "cs2": {
+    "process_name": "cs2.exe",
+    "window_title": "Counter-Strike 2",
+    "keys": {
+      "drop": "g",
+      "grenade": "4",
+      "crouch": "ctrl",
+      "fire": "lbutton",
+      "forward": "w",
+      "back": "s",
+      "left": "a",
+      "right": "d"
+    }
+  },
+  "effects": {
+    "flash": {
+      "enabled": true,
+      "amount": 100,
+      "duration_sec": 8,
+      "cooldown_sec": 20,
+      "mode": "gamma_and_overlay",
+      "fade_out_sec": 1.5
+    },
+    "drop_weapon": {
+      "enabled": true,
+      "amount": 200,
+      "cooldown_sec": 15
+    },
+    "mouse_jerk": {
+      "enabled": true,
+      "amount": 300,
+      "cooldown_sec": 15,
+      "intensity": 900,
+      "jerks": 7,
+      "interval_ms": 40
+    },
+    "block_wasd": {
+      "enabled": true,
+      "amount": 400,
+      "duration_sec": 10,
+      "cooldown_sec": 25
+    },
+    "nade_and_crouch": {
+      "enabled": true,
+      "amount": 500,
+      "cooldown_sec": 30,
+      "look_down_pixels": 3200,
+      "crouch_hold_sec": 1.2
+    },
+    "kill_cs2": {
+      "enabled": true,
+      "amount": 1000,
+      "cooldown_sec": 180
+    },
+    "minecraft_takeover": {
+      "enabled": true,
+      "amount": 10000,
+      "cooldown_sec": 600,
+      "video_path": "assets/minecraft_letsplay.mp4",
+      "youtube_url": "",
+      "block_input": true
+    }
+  }
+}
