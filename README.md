@@ -1,6 +1,6 @@
 # CS2 Donate Interact
 
-Приватный инструмент для стримера: донат определённой суммы запускает эффект в CS2. Это не чит и не чтение памяти игры. Приложение слушает DonationAlerts и шлёт обычный ввод Windows — тот же `SendInput`, которым пользуются AHK-скрипты из роликов вроде [этого](https://www.youtube.com/watch?v=HECT8YMu-Ks).
+Приватный инструмент для стримера: донат определённой суммы запускает эффект в CS2. Это не чит и не чтение памяти игры. Приложение слушает DonationAlerts, DonatePay и Trula.io и шлёт обычный ввод Windows — тот же `SendInput`, которым пользуются AHK-скрипты из роликов вроде [этого](https://www.youtube.com/watch?v=HECT8YMu-Ks).
 
 Python здесь удобнее чистого AHK: нормальная панель настроек, WebSocket донатов, очередь, кулдауны и аварийный стоп.
 
@@ -32,19 +32,17 @@ python -m src.main
 4. Проверь эффекты кнопками **Тест**, уже без донатов.
 5. Для 10000₽ положи ролик в `assets/minecraft_letsplay.mp4` или укажи путь в настройках. Надёжнее локальный файл. Для YouTube нужен [mpv](https://mpv.io/).
 
-## DonationAlerts
+## Как привязать донаты
 
-1. Стример заходит на [создание приложения](https://www.donationalerts.com/application/clients).
-2. Redirect URL: `http://127.0.0.1:53682/callback`
-3. В приложении вставляет Client ID и Client secret, жмёт **Войти через DonationAlerts**.
-4. Либо вставляет готовый access token вручную.
+Подробные шаги: [SETUP.md](SETUP.md). Кратко:
 
-Токены пишутся в `secrets.json` и не попадают в git.
+- **DonationAlerts:** [настройки кабинета](https://www.donationalerts.com/dashboard/general) → скопируй **Секретный токен** или ссылку виджета с `token=` → вкладка Донаты → DonationAlerts → Подключить.
+- **DonatePay:** [donatepay.ru/page/api](https://donatepay.ru/page/api) → скопируй API-ключ → DonatePay → Подключить.
+- **Trula:** кабинет [trula.io](https://trula.io/) → Виджеты → Алерты → скопируй OBS-ссылку целиком → Trula → Подключить.
 
-Пока DA не подключён, можно тестировать так:
+Можно включить одну площадку или все сразу. Токены пишутся в `secrets.json` и не попадают в git.
 
-- кнопки **Тест**
-- `http://127.0.0.1:8765/donate?amount=100`
+Пока площадки не подключены, проверяй кнопками **Тест** или `http://127.0.0.1:8765/donate?amount=100`.
 
 ## Кулдауны и режимы
 

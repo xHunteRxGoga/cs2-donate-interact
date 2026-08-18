@@ -27,10 +27,20 @@ DEFAULTS: dict[str, Any] = {
     },
     "donationalerts": {
         "access_token": "",
+        "widget_token": "",
         "client_id": "",
         "client_secret": "",
         "redirect_uri": "http://127.0.0.1:53682/callback",
         "mode": "websocket",
+    },
+    "donatepay": {
+        "enabled": True,
+        "api_token": "",
+        "poll_interval_sec": 20,
+    },
+    "trula": {
+        "enabled": True,
+        "widget_url": "",
     },
     "webhook": {
         "enabled": True,
@@ -146,22 +156,39 @@ def load_config() -> dict[str, Any]:
         token = secrets.get("donationalerts_access_token", "")
         if token:
             data["donationalerts"]["access_token"] = token
+        if secrets.get("donationalerts_widget_token"):
+            data["donationalerts"]["widget_token"] = secrets["donationalerts_widget_token"]
         for key in ("client_id", "client_secret"):
             if secrets.get(f"donationalerts_{key}"):
                 data["donationalerts"][key] = secrets[f"donationalerts_{key}"]
+        if secrets.get("donatepay_api_token"):
+            data["donatepay"]["api_token"] = secrets["donatepay_api_token"]
+        if secrets.get("trula_widget_url"):
+            data["trula"]["widget_url"] = secrets["trula_widget_url"]
     return data
 
 
 def save_config(data: dict[str, Any]) -> None:
     payload = deepcopy(data)
-    secrets = {
-        "donationalerts_access_token": payload["donationalerts"].get("access_token", ""),
-        "donationalerts_client_id": payload["donationalerts"].get("client_id", ""),
-        "donationalerts_client_secret": payload["donationalerts"].get("client_secret", ""),
-    }
+    secrets: dict[str, Any] = {}
+    if SECRETS_PATH.exists():
+        secrets = json.loads(SECRETS_PATH.read_text(encoding="utf-8"))
+    secrets.update(
+        {
+            "donationalerts_access_token": payload["donationalerts"].get("access_token", ""),
+            "donationalerts_widget_token": payload["donationalerts"].get("widget_token", ""),
+            "donationalerts_client_id": payload["donationalerts"].get("client_id", ""),
+            "donationalerts_client_secret": payload["donationalerts"].get("client_secret", ""),
+            "donatepay_api_token": payload["donatepay"].get("api_token", ""),
+            "trula_widget_url": payload["trula"].get("widget_url", ""),
+        }
+    )
     payload["donationalerts"]["access_token"] = ""
+    payload["donationalerts"]["widget_token"] = ""
     payload["donationalerts"]["client_id"] = ""
     payload["donationalerts"]["client_secret"] = ""
+    payload["donatepay"]["api_token"] = ""
+    payload["trula"]["widget_url"] = ""
     CONFIG_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     SECRETS_PATH.write_text(json.dumps(secrets, ensure_ascii=False, indent=2), encoding="utf-8")
 

@@ -13,10 +13,20 @@
   },
   "donationalerts": {
     "access_token": "",
+    "widget_token": "",
     "client_id": "",
     "client_secret": "",
     "redirect_uri": "http://127.0.0.1:53682/callback",
     "mode": "websocket"
+  },
+  "donatepay": {
+    "enabled": true,
+    "api_token": "",
+    "poll_interval_sec": 20
+  },
+  "trula": {
+    "enabled": true,
+    "widget_url": ""
   },
   "webhook": {
     "enabled": true,

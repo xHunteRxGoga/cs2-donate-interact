@@ -11,6 +11,7 @@ import webbrowser
 import httpx
 import websockets
 
+from src.donations.trula import extract_token
 from src.donations.models import Donation
 
 
@@ -28,14 +29,17 @@ class DonationAlertsClient:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.access_token = ""
+        self.widget_token = ""
         self.mode = "websocket"
         self._seen: set[str] = set()
+        self._sio = None
 
-    def start(self, access_token: str, mode: str = "websocket") -> None:
+    def start(self, access_token: str = "", mode: str = "websocket", widget_token: str = "") -> None:
         self.stop()
-        self.access_token = access_token.strip()
+        self.access_token = (access_token or "").strip()
+        self.widget_token = extract_token(widget_token or "")
         self.mode = mode
-        if not self.access_token:
+        if not self.widget_token and not self.access_token:
             self.on_status("DonationAlerts: нет токена")
             return
         self._stop.clear()
@@ -44,12 +48,87 @@ class DonationAlertsClient:
 
     def stop(self) -> None:
         self._stop.set()
+        if self._sio is not None:
+            try:
+                self._sio.disconnect()
+            except Exception:
+                pass
+            self._sio = None
 
     def _run(self) -> None:
         try:
+            if self.widget_token:
+                self._run_widget_socket()
+                return
             asyncio.run(self._main())
         except Exception as exc:
             self.on_status(f"DonationAlerts ошибка: {exc}")
+
+    def _run_widget_socket(self) -> None:
+        import time
+
+        try:
+            import socketio
+        except ImportError:
+            self.on_status("DonationAlerts: установи зависимости через run.bat")
+            return
+        sio = socketio.Client(reconnection=True, reconnection_delay=3, reconnection_delay_max=15)
+        self._sio = sio
+
+        @sio.event
+        def connect() -> None:
+            sio.emit("add-user", {"token": self.widget_token, "type": "alert_widget"})
+            self.on_status("DonationAlerts: виджет подключен, жду донаты")
+
+        @sio.on("donation")
+        def donation(data) -> None:
+            payload = json.loads(data) if isinstance(data, str) else data
+            if not isinstance(payload, dict):
+                return
+            donation_id = str(payload.get("id") or "")
+            if donation_id:
+                if donation_id in self._seen:
+                    return
+                self._seen.add(donation_id)
+            self.on_donation(
+                Donation(
+                    username=str(payload.get("username") or "Аноним"),
+                    amount=float(payload.get("amount") or payload.get("amount_main") or 0),
+                    currency=str(payload.get("currency") or "RUB"),
+                    message=str(payload.get("message") or ""),
+                    source="donationalerts",
+                    donation_id=donation_id,
+                )
+            )
+
+        hosts = [
+            "wss://socket.donationalerts.ru:443",
+            "https://socket.donationalerts.ru",
+            "wss://socket6.donationalerts.ru",
+            "wss://socket7.donationalerts.ru",
+        ]
+        last_error = None
+        for host in hosts:
+            if self._stop.is_set():
+                return
+            try:
+                sio.connect(host, transports=["websocket"], wait_timeout=8)
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+        if last_error and not sio.connected:
+            self.on_status(f"DonationAlerts виджет: {last_error}")
+            if self.access_token:
+                self.on_status("DonationAlerts: пробую API-токен")
+                asyncio.run(self._main())
+            return
+        while not self._stop.is_set():
+            time.sleep(0.2)
+        try:
+            sio.disconnect()
+        except Exception:
+            pass
 
     async def _main(self) -> None:
         if self.mode == "poll":
