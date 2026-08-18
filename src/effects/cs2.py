@@ -7,13 +7,15 @@ from typing import Any
 
 from src.effects.input_win import (
     click_mouse,
+    find_window_by_process,
     find_window_by_title,
-    focus_window,
+    force_foreground,
     foreground_title,
     key_down,
     key_up,
     move_mouse,
     tap_key,
+    user32,
 )
 
 
@@ -33,22 +35,33 @@ def is_cs2_focused(window_title: str = "Counter-Strike 2") -> bool:
     return window_title.lower() in foreground_title().lower()
 
 
-def focus_cs2(window_title: str = "Counter-Strike 2") -> bool:
-    hwnd = find_window_by_title(window_title)
+def find_cs2_hwnd(cfg: dict[str, Any]) -> int | None:
+    return find_window_by_process(cfg["cs2"]["process_name"]) or find_window_by_title(cfg["cs2"]["window_title"])
+
+
+def ensure_cs2_ready(cfg: dict[str, Any]) -> None:
+    hwnd = find_cs2_hwnd(cfg)
     if not hwnd:
-        return False
-    focus_window(hwnd)
-    return True
+        raise RuntimeError("Окно CS2 не найдено. Нужен режим «Во весь экран в окне», не exclusive fullscreen.")
+    if user32.GetForegroundWindow() == hwnd:
+        return
+    if not force_foreground(hwnd):
+        raise RuntimeError(
+            "CS2 не удалось вывести на передний план, поэтому клавиши не попали в игру. "
+            "Кликни по CS2 и повтори тест, либо запускай эффекты, пока игра уже в фокусе."
+        )
 
 
 def drop_weapon(cfg: dict[str, Any]) -> None:
-    focus_cs2(cfg["cs2"]["window_title"])
-    tap_key(cfg["cs2"]["keys"]["drop"], 0.06)
+    ensure_cs2_ready(cfg)
+    tap_key(cfg["cs2"]["keys"]["drop"], 0.09)
+    time.sleep(0.05)
+    tap_key(cfg["cs2"]["keys"]["drop"], 0.09)
 
 
 def mouse_jerk(cfg: dict[str, Any]) -> None:
     effect = cfg["effects"]["mouse_jerk"]
-    focus_cs2(cfg["cs2"]["window_title"])
+    ensure_cs2_ready(cfg)
     intensity = int(effect.get("intensity", 900))
     jerks = int(effect.get("jerks", 7))
     interval = int(effect.get("interval_ms", 40)) / 1000
@@ -57,20 +70,30 @@ def mouse_jerk(cfg: dict[str, Any]) -> None:
         dy = random.randint(-intensity, intensity)
         if abs(dx) < intensity // 4:
             dx = intensity if dx >= 0 else -intensity
-        move_mouse(dx, dy)
+        steps = 4
+        for _step in range(steps):
+            move_mouse(dx // steps, dy // steps)
+            time.sleep(0.008)
         time.sleep(interval)
 
 
 def nade_and_crouch(cfg: dict[str, Any]) -> None:
     keys = cfg["cs2"]["keys"]
     effect = cfg["effects"]["nade_and_crouch"]
-    focus_cs2(cfg["cs2"]["window_title"])
-    tap_key(keys["grenade"], 0.05)
-    time.sleep(0.12)
-    move_mouse(0, int(effect.get("look_down_pixels", 3200)))
+    ensure_cs2_ready(cfg)
+    tap_key(keys["grenade"], 0.1)
+    time.sleep(0.18)
+    look = int(effect.get("look_down_pixels", 3200))
+    chunk = max(200, look // 8)
+    remaining = look
+    while remaining > 0:
+        step = min(chunk, remaining)
+        move_mouse(0, step)
+        remaining -= step
+        time.sleep(0.01)
     time.sleep(0.08)
-    click_mouse(0.08)
-    time.sleep(0.05)
+    click_mouse(0.1)
+    time.sleep(0.06)
     key_down(keys["crouch"])
     time.sleep(float(effect.get("crouch_hold_sec", 1.2)))
     key_up(keys["crouch"])

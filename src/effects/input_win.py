@@ -12,17 +12,23 @@ kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 INPUT_MOUSE = 0
 INPUT_KEYBOARD = 1
+KEYEVENTF_EXTENDEDKEY = 0x0001
 KEYEVENTF_KEYUP = 0x0002
-KEYEVENTF_UNICODE = 0x0004
+KEYEVENTF_SCANCODE = 0x0008
 MOUSEEVENTF_MOVE = 0x0001
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_MOVE_NOCOALESCE = 0x2000
 WH_KEYBOARD_LL = 13
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
+WM_QUIT = 0x0012
 LLKHF_ALTDOWN = 0x20
+MAPVK_VK_TO_VSC = 0
+SW_RESTORE = 9
+SW_SHOW = 5
 
 VK_SHIFT = 0x10
 VK_CONTROL = 0x11
@@ -33,10 +39,23 @@ VK_ESCAPE = 0x1B
 VK_F4 = 0x73
 VK_TAB = 0x09
 VK_LBUTTON = 0x01
-
-MAPVK_VK_TO_VSC = 0
+VK_SNAPSHOT = 0x2C
+VK_INSERT = 0x2D
+VK_DELETE = 0x2E
+VK_HOME = 0x24
+VK_END = 0x23
+VK_PRIOR = 0x21
+VK_NEXT = 0x22
+VK_LEFT = 0x25
+VK_UP = 0x26
+VK_RIGHT = 0x27
+VK_DOWN = 0x28
+VK_RMENU = 0xA5
+VK_RCONTROL = 0xA3
 
 ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+LRESULT = ctypes.c_ssize_t
+IS_64 = ctypes.sizeof(ctypes.c_void_p) == 8
 
 
 class MOUSEINPUT(ctypes.Structure):
@@ -73,7 +92,10 @@ class INPUT_UNION(ctypes.Union):
 
 
 class INPUT(ctypes.Structure):
-    _fields_ = [("type", wintypes.DWORD), ("union", INPUT_UNION)]
+    if IS_64:
+        _fields_ = [("type", wintypes.DWORD), ("_pad", wintypes.DWORD), ("union", INPUT_UNION)]
+    else:
+        _fields_ = [("type", wintypes.DWORD), ("union", INPUT_UNION)]
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -86,16 +108,18 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
     ]
 
 
-HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 
 user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
 user32.SetWindowsHookExW.restype = wintypes.HHOOK
 user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
-user32.CallNextHookEx.restype = ctypes.c_long
+user32.CallNextHookEx.restype = LRESULT
 user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
 user32.UnhookWindowsHookEx.restype = wintypes.BOOL
 user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
 user32.GetAsyncKeyState.restype = wintypes.SHORT
+user32.VkKeyScanW.argtypes = [wintypes.WCHAR]
+user32.VkKeyScanW.restype = wintypes.SHORT
 user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
 user32.MapVirtualKeyW.restype = wintypes.UINT
 user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
@@ -105,18 +129,67 @@ user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 user32.GetWindowTextW.restype = ctypes.c_int
 user32.SetForegroundWindow.argtypes = [wintypes.HWND]
 user32.SetForegroundWindow.restype = wintypes.BOOL
+user32.BringWindowToTop.argtypes = [wintypes.HWND]
+user32.SetActiveWindow.argtypes = [wintypes.HWND]
+user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+user32.AttachThreadInput.restype = wintypes.BOOL
+user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+user32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+user32.LockSetForegroundWindow.argtypes = [wintypes.UINT]
 user32.EnumWindows.argtypes = [ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM), wintypes.LPARAM]
 user32.IsWindowVisible.argtypes = [wintypes.HWND]
 user32.IsWindowVisible.restype = wintypes.BOOL
 user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
-user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+user32.GetMessageW.restype = ctypes.c_int
+user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 user32.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT]
 user32.PeekMessageW.restype = wintypes.BOOL
+user32.keybd_event.argtypes = [ctypes.c_ubyte, ctypes.c_ubyte, wintypes.DWORD, ULONG_PTR]
+user32.mouse_event.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ULONG_PTR]
+kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+kernel32.GetCurrentProcessId.restype = wintypes.DWORD
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.QueryFullProcessImageNameW.argtypes = [
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    wintypes.LPWSTR,
+    ctypes.POINTER(wintypes.DWORD),
+]
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+ASFW_ANY = 0xFFFFFFFF
+LSFW_UNLOCK = 2
+EXTENDED_VKS = {
+    VK_RMENU,
+    VK_RCONTROL,
+    VK_LWIN,
+    VK_RWIN,
+    VK_INSERT,
+    VK_DELETE,
+    VK_HOME,
+    VK_END,
+    VK_PRIOR,
+    VK_NEXT,
+    VK_LEFT,
+    VK_UP,
+    VK_RIGHT,
+    VK_DOWN,
+    VK_SNAPSHOT,
+    VK_TAB,
+}
 
 NAME_TO_VK = {
     "lbutton": VK_LBUTTON,
     "ctrl": VK_CONTROL,
     "control": VK_CONTROL,
+    "lctrl": VK_CONTROL,
+    "rctrl": VK_RCONTROL,
     "alt": VK_MENU,
     "shift": VK_SHIFT,
     "esc": VK_ESCAPE,
@@ -137,73 +210,109 @@ def vk_from_name(name: str) -> int:
     if key in NAME_TO_VK:
         return NAME_TO_VK[key]
     if len(key) == 1:
-        return ctypes.windll.user32.VkKeyScanW(ord(key)) & 0xFF
+        return user32.VkKeyScanW(key) & 0xFF
     if key.startswith("f") and key[1:].isdigit():
         return 0x70 + int(key[1:]) - 1
     raise ValueError(f"Неизвестная клавиша: {name}")
 
 
-def _send(inputs: list[INPUT]) -> None:
+def _send(inputs: list[INPUT]) -> int:
+    if not inputs:
+        return 0
     arr = (INPUT * len(inputs))(*inputs)
-    user32.SendInput(len(inputs), arr, ctypes.sizeof(INPUT))
+    sent = user32.SendInput(len(inputs), arr, ctypes.sizeof(INPUT))
+    if sent != len(inputs):
+        err = ctypes.get_last_error()
+        raise RuntimeError(f"SendInput отправил {sent}/{len(inputs)} событий, код {err}")
+    return sent
 
 
 def _key_input(vk: int, up: bool = False) -> INPUT:
     scan = user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)
-    flags = KEYEVENTF_KEYUP if up else 0
+    flags = KEYEVENTF_SCANCODE
+    if vk in EXTENDED_VKS:
+        flags |= KEYEVENTF_EXTENDEDKEY
+    if up:
+        flags |= KEYEVENTF_KEYUP
     inp = INPUT()
     inp.type = INPUT_KEYBOARD
-    inp.union.ki = KEYBDINPUT(vk, scan, flags, 0, 0)
+    inp.union.ki = KEYBDINPUT(0, scan, flags, 0, 0)
     return inp
 
 
-def tap_key(name: str, hold_sec: float = 0.04) -> None:
+def tap_key(name: str, hold_sec: float = 0.08) -> None:
     vk = vk_from_name(name)
     if vk == VK_LBUTTON:
         click_mouse()
         return
     _send([_key_input(vk, False)])
+    scan = user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)
+    user32.keybd_event(vk, scan, 0, 0)
     time.sleep(hold_sec)
     _send([_key_input(vk, True)])
+    user32.keybd_event(vk, scan, KEYEVENTF_KEYUP, 0)
 
 
 def key_down(name: str) -> None:
     vk = vk_from_name(name)
     if vk == VK_LBUTTON:
         _send([_mouse_input(MOUSEEVENTF_LEFTDOWN)])
+        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
         return
     _send([_key_input(vk, False)])
+    user32.keybd_event(vk, user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC), 0, 0)
 
 
 def key_up(name: str) -> None:
     vk = vk_from_name(name)
     if vk == VK_LBUTTON:
         _send([_mouse_input(MOUSEEVENTF_LEFTUP)])
+        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
         return
     _send([_key_input(vk, True)])
+    user32.keybd_event(vk, user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC), KEYEVENTF_KEYUP, 0)
 
 
 def _mouse_input(flags: int, dx: int = 0, dy: int = 0) -> INPUT:
     inp = INPUT()
     inp.type = INPUT_MOUSE
-    inp.union.mi = MOUSEINPUT(dx, dy, 0, flags, 0, 0)
+    inp.union.mi = MOUSEINPUT(int(dx), int(dy), 0, flags, 0, 0)
     return inp
 
 
 def move_mouse(dx: int, dy: int) -> None:
-    _send([_mouse_input(MOUSEEVENTF_MOVE, int(dx), int(dy))])
+    dx_i, dy_i = int(dx), int(dy)
+    flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_MOVE_NOCOALESCE
+    _send([_mouse_input(flags, dx_i, dy_i)])
+    user32.mouse_event(flags, dx_i & 0xFFFFFFFF, dy_i & 0xFFFFFFFF, 0, 0)
 
 
-def click_mouse(hold_sec: float = 0.05) -> None:
+def click_mouse(hold_sec: float = 0.07) -> None:
     _send([_mouse_input(MOUSEEVENTF_LEFTDOWN)])
+    user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
     time.sleep(hold_sec)
     _send([_mouse_input(MOUSEEVENTF_LEFTUP)])
+    user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
 
 def get_window_title(hwnd: int) -> str:
     buf = ctypes.create_unicode_buffer(512)
     user32.GetWindowTextW(hwnd, buf, 512)
     return buf.value
+
+
+def _process_name(pid: int) -> str:
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return ""
+    try:
+        size = wintypes.DWORD(32768)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return buf.value.split("\\")[-1].lower()
+    finally:
+        kernel32.CloseHandle(handle)
+    return ""
 
 
 def find_window_by_title(part: str) -> int | None:
@@ -221,10 +330,62 @@ def find_window_by_title(part: str) -> int | None:
     return found["hwnd"] or None
 
 
+def find_window_by_process(process_name: str) -> int | None:
+    found = {"hwnd": 0}
+    want = process_name.lower()
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def callback(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if _process_name(pid.value) == want and get_window_title(hwnd):
+            found["hwnd"] = hwnd
+            return False
+        return True
+
+    user32.EnumWindows(callback, 0)
+    return found["hwnd"] or None
+
+
+def force_foreground(hwnd: int) -> bool:
+    if user32.GetForegroundWindow() == hwnd:
+        return True
+    try:
+        user32.AllowSetForegroundWindow(ASFW_ANY)
+        user32.LockSetForegroundWindow(LSFW_UNLOCK)
+    except Exception:
+        pass
+    current = kernel32.GetCurrentThreadId()
+    fg = user32.GetForegroundWindow()
+    fg_tid = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+    target_tid = user32.GetWindowThreadProcessId(hwnd, None)
+    attached_fg = False
+    attached_target = False
+    if fg_tid and fg_tid != current:
+        attached_fg = bool(user32.AttachThreadInput(current, fg_tid, True))
+    if target_tid and target_tid != current:
+        attached_target = bool(user32.AttachThreadInput(current, target_tid, True))
+    try:
+        user32.ShowWindow(hwnd, SW_RESTORE)
+        user32.ShowWindow(hwnd, SW_SHOW)
+        user32.keybd_event(VK_MENU, 0, 0, 0)
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+        user32.SetActiveWindow(hwnd)
+        user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+    finally:
+        if attached_target:
+            user32.AttachThreadInput(current, target_tid, False)
+        if attached_fg:
+            user32.AttachThreadInput(current, fg_tid, False)
+    time.sleep(0.12)
+    return user32.GetForegroundWindow() == hwnd
+
+
 def focus_window(hwnd: int) -> None:
-    user32.ShowWindow(hwnd, 9)
-    user32.SetForegroundWindow(hwnd)
-    time.sleep(0.05)
+    force_foreground(hwnd)
 
 
 def foreground_title() -> str:
@@ -277,7 +438,11 @@ class InputGuard:
         self._hook = None
         self._proc = None
         self._thread: threading.Thread | None = None
+        self._thread_id = 0
         self._running = False
+
+    def hook_ok(self) -> bool:
+        return bool(self._hook)
 
     def set_blocked_keys(self, names: Iterable[str]) -> None:
         with self._lock:
@@ -297,20 +462,30 @@ class InputGuard:
         self._running = True
         self._thread = threading.Thread(target=self._loop, name="input-guard", daemon=True)
         self._thread.start()
+        for _ in range(50):
+            if self._hook:
+                break
+            time.sleep(0.02)
 
     def stop(self) -> None:
         self._running = False
+        if self._thread_id:
+            user32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0)
         if self._hook:
             user32.UnhookWindowsHookEx(self._hook)
             self._hook = None
 
     def _loop(self) -> None:
+        self._thread_id = kernel32.GetCurrentThreadId()
         self._proc = HOOKPROC(self._callback)
         self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, None, 0)
         msg = wintypes.MSG()
         while self._running:
-            user32.PeekMessageW(ctypes.byref(msg), 0, 0, 0, 1)
-            time.sleep(0.01)
+            ret = user32.GetMessageW(ctypes.byref(msg), 0, 0, 0)
+            if ret == 0 or ret == -1:
+                break
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
         if self._hook:
             user32.UnhookWindowsHookEx(self._hook)
             self._hook = None
@@ -327,9 +502,23 @@ class InputGuard:
                 if self.on_panic:
                     threading.Thread(target=self.on_panic, daemon=True).start()
                 return 1
+            # Не трогаем Ctrl+C/V/X/A и ввод в нашем окне — иначе нельзя вставить ссылку.
+            ctrl = bool(user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
+            if ctrl and info.vkCode in {0x41, 0x43, 0x56, 0x58, 0x5A}:  # A C V X Z
+                return user32.CallNextHookEx(self._hook, n_code, w_param, l_param)
+            if self._app_is_foreground():
+                return user32.CallNextHookEx(self._hook, n_code, w_param, l_param)
             with self._lock:
                 block_all = self.block_all
                 blocked = info.vkCode in self.blocked_vks
             if block_all or blocked:
                 return 1
         return user32.CallNextHookEx(self._hook, n_code, w_param, l_param)
+
+    def _app_is_foreground(self) -> bool:
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return False
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return pid.value == kernel32.GetCurrentProcessId()

@@ -136,8 +136,85 @@ class App(tk.Tk):
             relief="flat",
             highlightthickness=1,
             highlightbackground="#2a3140",
+            exportselection=False,
         )
+        self._bind_clipboard(entry)
         return entry
+
+    def _bind_clipboard(self, widget: tk.Entry) -> None:
+        def paste(_event=None, target: tk.Entry = widget) -> str:
+            self._paste_into(target)
+            return "break"
+
+        for seq in ("<<Paste>>", "<Control-v>", "<Control-V>", "<Shift-Insert>", "<Control-м>", "<Control-М>"):
+            widget.bind(seq, paste)
+        widget.bind("<Button-3>", lambda event, target=widget: self._entry_menu(event, target))
+
+    def _paste_into(self, entry: tk.Entry) -> None:
+        text = ""
+        try:
+            text = self.clipboard_get()
+        except tk.TclError:
+            text = ""
+        if not text:
+            try:
+                import ctypes
+
+                user32 = ctypes.windll.user32
+                kernel32 = ctypes.windll.kernel32
+                CF_UNICODETEXT = 13
+                if user32.OpenClipboard(None):
+                    try:
+                        handle = user32.GetClipboardData(CF_UNICODETEXT)
+                        if handle:
+                            locked = kernel32.GlobalLock(handle)
+                            if locked:
+                                text = ctypes.wstring_at(locked)
+                                kernel32.GlobalUnlock(handle)
+                    finally:
+                        user32.CloseClipboard()
+            except Exception:
+                text = text or ""
+        if not text:
+            return
+        text = text.strip().replace("\r", "").replace("\n", "")
+        try:
+            if entry.selection_present():
+                entry.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass
+        entry.insert("insert", text)
+        entry.focus_set()
+        entry.icursor("end")
+        entry.xview_moveto(1)
+
+    def _entry_menu(self, event: tk.Event, entry: tk.Entry) -> None:
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Вставить", command=lambda: self._paste_into(entry))
+        menu.add_command(label="Копировать", command=lambda: self._copy_from(entry))
+        menu.add_command(label="Вырезать", command=lambda: self._cut_from(entry))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _copy_from(self, entry: tk.Entry) -> None:
+        try:
+            text = entry.selection_get()
+        except tk.TclError:
+            text = entry.get()
+        self.clipboard_clear()
+        self.clipboard_append(text)
+
+    def _cut_from(self, entry: tk.Entry) -> None:
+        self._copy_from(entry)
+        try:
+            entry.delete("sel.first", "sel.last")
+        except tk.TclError:
+            entry.delete(0, "end")
+
+    def _paste_button(self, parent: tk.Widget, entry: tk.Entry) -> ttk.Button:
+        return ttk.Button(parent, text="Вставить", command=lambda: self._paste_into(entry))
 
     def _build_effects(self) -> None:
         ttk.Label(
@@ -325,16 +402,22 @@ class App(tk.Tk):
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(0, 8))
         ttk.Button(box, text="Открыть страницу с токеном", command=lambda: self._open("https://www.donationalerts.com/dashboard/general")).grid(row=3, column=1, sticky="w", pady=4)
         ttk.Label(box, text="Секретный токен или ссылка виджета").grid(row=4, column=0, sticky="e", padx=8, pady=6)
-        self.da_widget = self._entry(box, 64)
+        da_wrap = ttk.Frame(box)
+        da_wrap.grid(row=4, column=1, sticky="we", pady=6)
+        self.da_widget = self._entry(da_wrap, 64)
         self.da_widget.insert(0, da.get("widget_token", ""))
-        self.da_widget.grid(row=4, column=1, sticky="we", pady=6)
+        self.da_widget.pack(side="left", fill="x", expand=True)
+        self._paste_button(da_wrap, self.da_widget).pack(side="left", padx=(8, 0))
         ttk.Button(box, text="Подключить DonationAlerts", command=self._reconnect_da).grid(row=5, column=1, sticky="w", pady=8)
 
         ttk.Label(box, text="Дополнительно, если виджет не подходит — OAuth API", style="Muted.TLabel").grid(row=6, column=0, columnspan=3, sticky="w", pady=(12, 4))
         ttk.Label(box, text="Access token").grid(row=7, column=0, sticky="e", padx=8, pady=4)
-        self.da_token = self._entry(box, 64)
+        da_token_wrap = ttk.Frame(box)
+        da_token_wrap.grid(row=7, column=1, sticky="we", pady=4)
+        self.da_token = self._entry(da_token_wrap, 64)
         self.da_token.insert(0, da.get("access_token", ""))
-        self.da_token.grid(row=7, column=1, sticky="we", pady=4)
+        self.da_token.pack(side="left", fill="x", expand=True)
+        self._paste_button(da_token_wrap, self.da_token).pack(side="left", padx=(8, 0))
         ttk.Label(box, text="Client ID").grid(row=8, column=0, sticky="e", padx=8, pady=4)
         self.da_client = self._entry(box, 32)
         self.da_client.insert(0, da.get("client_id", ""))
@@ -362,9 +445,12 @@ class App(tk.Tk):
         self.dp_enabled = tk.BooleanVar(value=bool(dp.get("enabled", True)))
         ttk.Checkbutton(box, text="Слушать DonatePay", variable=self.dp_enabled).grid(row=4, column=1, sticky="w", pady=4)
         ttk.Label(box, text="API-ключ").grid(row=5, column=0, sticky="e", padx=8, pady=6)
-        self.dp_token = self._entry(box, 64)
+        dp_wrap = ttk.Frame(box)
+        dp_wrap.grid(row=5, column=1, sticky="we", pady=6)
+        self.dp_token = self._entry(dp_wrap, 64)
         self.dp_token.insert(0, dp.get("api_token", ""))
-        self.dp_token.grid(row=5, column=1, sticky="we", pady=6)
+        self.dp_token.pack(side="left", fill="x", expand=True)
+        self._paste_button(dp_wrap, self.dp_token).pack(side="left", padx=(8, 0))
         ttk.Label(box, text="Интервал опроса, сек").grid(row=6, column=0, sticky="e", padx=8, pady=4)
         self.dp_interval = self._entry(box, 8)
         self.dp_interval.insert(0, str(dp.get("poll_interval_sec", 20)))
@@ -385,9 +471,12 @@ class App(tk.Tk):
         self.trula_enabled = tk.BooleanVar(value=bool(trula.get("enabled", True)))
         ttk.Checkbutton(box, text="Слушать Trula", variable=self.trula_enabled).grid(row=5, column=1, sticky="w", pady=4)
         ttk.Label(box, text="Ссылка виджета или токен").grid(row=6, column=0, sticky="e", padx=8, pady=6)
-        self.trula_widget = self._entry(box, 64)
+        trula_wrap = ttk.Frame(box)
+        trula_wrap.grid(row=6, column=1, sticky="we", pady=6)
+        self.trula_widget = self._entry(trula_wrap, 64)
         self.trula_widget.insert(0, trula.get("widget_url", ""))
-        self.trula_widget.grid(row=6, column=1, sticky="we", pady=6)
+        self.trula_widget.pack(side="left", fill="x", expand=True)
+        self._paste_button(trula_wrap, self.trula_widget).pack(side="left", padx=(8, 0))
         ttk.Button(box, text="Подключить Trula", command=self._reconnect_trula).grid(row=7, column=1, sticky="w", pady=8)
         ttk.Label(box, text="Если ссылка не из виджета алертов, а страница доната /dp/..., сокет может не подключиться. Нужна именно OBS-ссылка.", style="Muted.TLabel").grid(row=8, column=0, columnspan=3, sticky="w", pady=8)
         box.columnconfigure(1, weight=1)

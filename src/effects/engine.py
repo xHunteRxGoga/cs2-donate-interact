@@ -180,6 +180,10 @@ class EffectEngine:
         elif effect_id == "mouse_jerk":
             mouse_jerk(cfg)
         elif effect_id == "block_wasd":
+            if not self.guard.hook_ok():
+                raise RuntimeError(
+                    "Хук клавиатуры не встал, WASD не заблокируются. Закрой приложение и запусти run.bat от имени администратора."
+                )
             keys = cfg["cs2"]["keys"]
             self.guard.set_blocked_keys([keys["forward"], keys["back"], keys["left"], keys["right"]])
             time.sleep(float(cfg["effects"]["block_wasd"].get("duration_sec", 10)))
