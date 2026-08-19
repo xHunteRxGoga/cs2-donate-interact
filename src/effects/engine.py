@@ -163,7 +163,11 @@ class EffectEngine:
             except Exception as exc:
                 self.log(f"Ошибка эффекта {job.effect_id}: {type(exc).__name__}: {exc}")
                 self.log(f"Диагностика после ошибки: {diagnose_cs2(self.get_config(), self.guard.hook_ok())}")
-                self.emergency_stop()
+                self.flash.cancel()
+                self.toast.cancel()
+                self.guard.clear_blocked_keys()
+                self.guard.set_block_all(False)
+                self.log("Эффект оборван, остальные тесты можно жать сразу. Аварийный стоп не нужен.")
             finally:
                 self.busy = False
                 self.current_effect = ""
@@ -241,6 +245,7 @@ class EffectEngine:
                 amount = "тест"
             self.toast.show(who, EFFECT_TITLES[job.effect_id], amount, float(overlay_cfg.get("duration_sec") or 4.5))
             self.log(f"оверлей: {who} → {EFFECT_TITLES[job.effect_id]} {amount}")
+            time.sleep(0.08)
         active = foreground_title() or "(нет)"
         if job.effect_id not in {"flash", "kill_cs2", "minecraft_takeover"}:
             if not is_cs2_focused(cfg["cs2"]["window_title"]):

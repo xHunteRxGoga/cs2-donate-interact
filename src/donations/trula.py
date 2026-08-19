@@ -23,9 +23,12 @@ class TrulaClient:
         self._seen: set[str] = set()
         self.widget = ""
         self.connected = False
+        self._generation = 0
 
     def start(self, widget: str) -> None:
-        self.stop()
+        self._generation += 1
+        gen = self._generation
+        self._stop.set()
         self.widget = (widget or "").strip()
         self.connected = False
         if not self.widget:
@@ -34,17 +37,21 @@ class TrulaClient:
         if "/dp/" in self.widget and "widget" not in self.widget.lower() and "overlay" not in self.widget.lower():
             self.on_status("Trula: это страница доната /dp/..., а нужна OBS-ссылка виджета алертов.")
         self._stop.clear()
-        threading.Thread(target=self._run, name="trula", daemon=True).start()
+        threading.Thread(target=self._run, args=(gen,), name="trula", daemon=True).start()
 
     def stop(self) -> None:
+        self._generation += 1
         self._stop.set()
         self.connected = False
 
-    def _run(self) -> None:
+    def _run(self, gen: int = 0) -> None:
+        if gen and gen != self._generation:
+            return
         try:
             asyncio.run(self._main())
         except Exception as exc:
-            self.on_status(f"Trula ошибка: {exc}")
+            if gen == self._generation:
+                self.on_status(f"Trula ошибка: {exc}")
 
     async def _main(self) -> None:
         page_url = self.widget if self.widget.startswith("http") else ""

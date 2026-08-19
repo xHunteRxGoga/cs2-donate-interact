@@ -136,6 +136,8 @@ user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
 user32.MapVirtualKeyW.restype = wintypes.UINT
 user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
 user32.SendInput.restype = wintypes.UINT
+user32.BlockInput.argtypes = [wintypes.BOOL]
+user32.BlockInput.restype = wintypes.BOOL
 user32.GetForegroundWindow.restype = wintypes.HWND
 user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 user32.GetWindowTextW.restype = ctypes.c_int
@@ -256,11 +258,23 @@ SCAN_BY_NAME = {
 }
 
 _log_fn: Callable[[str], None] | None = None
+_inject_depth = 0
+_inject_lock = threading.Lock()
+_hook_pausers: list[Callable[[bool], None]] = []
 
 
 def set_input_logger(fn: Callable[[str], None] | None) -> None:
     global _log_fn
     _log_fn = fn
+
+
+def register_hook_pauser(fn: Callable[[bool], None]) -> None:
+    if fn not in _hook_pausers:
+        _hook_pausers.append(fn)
+
+
+def injecting() -> bool:
+    return _inject_depth > 0
 
 
 def _log(text: str) -> None:
@@ -354,17 +368,78 @@ def scan_from_name(name: str, vk: int) -> int:
     return int(user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) or 0)
 
 
+def _begin_inject() -> None:
+    global _inject_depth
+    with _inject_lock:
+        _inject_depth += 1
+        if _inject_depth == 1:
+            for pauser in _hook_pausers:
+                try:
+                    pauser(True)
+                except Exception:
+                    pass
+    try:
+        user32.BlockInput(False)
+    except Exception:
+        pass
+
+
+def _end_inject() -> None:
+    global _inject_depth
+    with _inject_lock:
+        _inject_depth = max(0, _inject_depth - 1)
+        if _inject_depth == 0:
+            for pauser in _hook_pausers:
+                try:
+                    pauser(False)
+                except Exception:
+                    pass
+
+
+def _legacy_send(inputs: list[INPUT]) -> int:
+    sent = 0
+    for inp in inputs:
+        if inp.type == INPUT_KEYBOARD:
+            ki = inp.union.ki
+            flags = ki.dwFlags
+            vk = ki.wVk
+            scan = ki.wScan
+            if not vk and scan:
+                vk = int(user32.MapVirtualKeyW(scan, MAPVK_VSC_TO_VK) or 0)
+            user32.keybd_event(vk & 0xFF, scan & 0xFF, flags, 0)
+            sent += 1
+        elif inp.type == INPUT_MOUSE:
+            mi = inp.union.mi
+            user32.mouse_event(mi.dwFlags, mi.dx & 0xFFFFFFFF, mi.dy & 0xFFFFFFFF, mi.mouseData, 0)
+            sent += 1
+    return sent
+
+
 def _send(inputs: list[INPUT]) -> int:
     if not inputs:
         return 0
     arr = (INPUT * len(inputs))(*inputs)
-    sent = user32.SendInput(len(inputs), arr, ctypes.sizeof(INPUT))
-    if sent != len(inputs):
-        err = ctypes.get_last_error()
-        raise RuntimeError(
-            f"SendInput отправил {sent}/{len(inputs)}, код {err}, sizeof(INPUT)={ctypes.sizeof(INPUT)}"
-        )
-    return sent
+    size = ctypes.sizeof(INPUT)
+    _begin_inject()
+    try:
+        ctypes.set_last_error(0)
+        sent = user32.SendInput(len(inputs), arr, size)
+        if sent != len(inputs):
+            time.sleep(0.02)
+            ctypes.set_last_error(0)
+            sent = user32.SendInput(len(inputs), arr, size)
+        if sent != len(inputs):
+            _log(f"SendInput {sent}/{len(inputs)}, пробую keybd_event/mouse_event")
+            sent = _legacy_send(inputs)
+        if sent != len(inputs):
+            err = ctypes.get_last_error()
+            raise RuntimeError(
+                f"SendInput отправил {sent}/{len(inputs)}, код {err}, sizeof(INPUT)={size}. "
+                "На FACEIT/античите синтетический ввод часто режется — флешка при этом работает."
+            )
+        return sent
+    finally:
+        _end_inject()
 
 
 def _key_input(vk: int, scan: int, up: bool = False, scancode: bool = True) -> INPUT:
@@ -611,9 +686,19 @@ class InputGuard:
         self._thread: threading.Thread | None = None
         self._thread_id = 0
         self._running = False
+        self._paused = False
+        register_hook_pauser(self._set_paused)
 
     def hook_ok(self) -> bool:
         return bool(self._hook)
+
+    def _set_paused(self, paused: bool) -> None:
+        self._paused = paused
+        if paused and self._hook:
+            user32.UnhookWindowsHookEx(self._hook)
+            self._hook = None
+        elif not paused and self._running and self._proc and not self._hook:
+            self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, None, 0)
 
     def set_blocked_keys(self, names: Iterable[str]) -> None:
         vks: set[int] = set()
@@ -675,6 +760,8 @@ class InputGuard:
             self._hook = None
 
     def _callback(self, n_code: int, w_param: int, l_param: int) -> int:
+        if self._paused or injecting():
+            return user32.CallNextHookEx(self._hook, n_code, w_param, l_param)
         if n_code >= 0 and w_param in (WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP):
             info = ctypes.cast(l_param, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
             is_down = w_param in (WM_KEYDOWN, WM_SYSKEYDOWN)

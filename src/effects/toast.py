@@ -9,6 +9,8 @@ GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_TOPMOST = 0x00000008
+WS_EX_TRANSPARENT = 0x00000020
+WS_EX_LAYERED = 0x00080000
 SWP_NOMOVE = 0x0002
 SWP_NOSIZE = 0x0001
 SWP_NOACTIVATE = 0x0010
@@ -77,10 +79,17 @@ class ToastController:
 
             win.update_idletasks()
             hwnd = int(win.winfo_id())
+            parent = int(user32.GetParent(hwnd) or 0)
+            if parent:
+                hwnd = parent
             get_long = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
             set_long = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
             style = get_long(hwnd, GWL_EXSTYLE)
-            set_long(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST)
+            set_long(
+                hwnd,
+                GWL_EXSTYLE,
+                style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED,
+            )
             user32.SetWindowPos(
                 hwnd,
                 HWND_TOPMOST,

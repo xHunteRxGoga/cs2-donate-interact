@@ -31,6 +31,15 @@ DA_WIDGET_HOSTS = (
 )
 
 
+class _GenStop:
+    def __init__(self, client: "DonationAlertsClient", gen: int) -> None:
+        self.client = client
+        self.gen = gen
+
+    def is_set(self) -> bool:
+        return self.client._stop.is_set() or (self.gen and self.client._generation != self.gen)
+
+
 class DonationAlertsClient:
     def __init__(self, on_donation: Callable[[Donation], None], on_status: Callable[[str], None]) -> None:
         self.on_donation = on_donation
@@ -43,9 +52,12 @@ class DonationAlertsClient:
         self.connected = False
         self._seen: set[str] = set()
         self._last_test: dict[str, float] = {}
+        self._generation = 0
 
     def start(self, access_token: str = "", mode: str = "websocket", widget_token: str = "") -> None:
-        self.stop()
+        self._generation += 1
+        gen = self._generation
+        self._stop.set()
         self.access_token = (access_token or "").strip()
         self.widget_token = extract_token(widget_token or "")
         self.mode = mode or "websocket"
@@ -55,14 +67,13 @@ class DonationAlertsClient:
             return
         self._stop.clear()
         if self.widget_token:
-            self._spawn("da-widget", self._run_widget)
+            self._spawn("da-widget", lambda: self._run_widget(gen))
         if self.access_token:
-            self._spawn("da-api", self._run_api)
-        if not self.widget_token and not self.access_token:
-            return
+            self._spawn("da-api", lambda: self._run_api(gen))
         self.on_status("DonationAlerts: слушатели запущены, жду донаты")
 
     def stop(self) -> None:
+        self._generation += 1
         self._stop.set()
         self.connected = False
 
@@ -103,13 +114,25 @@ class DonationAlertsClient:
             preview = str(payload)[:220]
             self.on_status(f"DonationAlerts событие «{event}»: {preview}")
 
-    def _run_widget(self) -> None:
+    def _run_widget(self, gen: int = 0) -> None:
+        if gen and gen != self._generation:
+            return
         try:
-            asyncio.run(self._widget_loop())
+            asyncio.run(self._widget_loop(gen))
         except Exception as exc:
-            self.on_status(f"DonationAlerts виджет: {exc}")
+            if gen == self._generation:
+                self.on_status(f"DonationAlerts виджет: {exc}")
 
-    async def _widget_loop(self) -> None:
+    def _run_api(self, gen: int = 0) -> None:
+        if gen and gen != self._generation:
+            return
+        try:
+            asyncio.run(self._api_main())
+        except Exception as exc:
+            if gen == self._generation:
+                self.on_status(f"DonationAlerts API: {exc}")
+
+    async def _widget_loop(self, gen: int = 0) -> None:
         hosts = list(DA_WIDGET_HOSTS)
         raw = RawSocketIO(self._on_raw_event, self.on_status)
         emits = [
@@ -117,16 +140,17 @@ class DonationAlertsClient:
             ("add-user", {"token": self.widget_token, "type": "minor"}),
         ]
         last_error: Exception | None = None
-        while not self._stop.is_set():
+        stop = _GenStop(self, gen)
+        while stop.is_set() is False:
             connected_any = False
             for host in hosts:
-                if self._stop.is_set():
+                if stop.is_set():
                     return
                 try:
                     await raw.connect_and_listen(
                         host,
                         emit_on_connect=emits,
-                        stop_event=self._stop,
+                        stop_event=stop,
                         label="DonationAlerts",
                     )
                     connected_any = True
@@ -136,11 +160,11 @@ class DonationAlertsClient:
                     last_error = exc
             if not connected_any:
                 self.on_status(f"DonationAlerts виджет не подключился ({last_error}), повтор через 8 сек")
-                self._stop.wait(8)
+                await asyncio.sleep(8)
             else:
-                if not self._stop.is_set():
+                if not stop.is_set():
                     self.on_status("DonationAlerts: сокет отключился, переподключаюсь")
-                    self._stop.wait(3)
+                    await asyncio.sleep(3)
 
     def _on_raw_event(self, event: str, args) -> None:
         self.connected = True
@@ -150,12 +174,6 @@ class DonationAlertsClient:
             self._accept_socket_args(event, args)
         except Exception as exc:
             self.on_status(f"DonationAlerts {event}: {exc}")
-
-    def _run_api(self) -> None:
-        try:
-            asyncio.run(self._api_main())
-        except Exception as exc:
-            self.on_status(f"DonationAlerts API: {exc}")
 
     async def _api_main(self) -> None:
         if self.mode == "poll":

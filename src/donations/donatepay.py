@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import threading
+import time
 from typing import Callable
 
 import httpx
@@ -38,6 +38,16 @@ class DonatePayClient:
         self.currency = "RUB"
         self.connected = False
         self._seen: set[str] = set()
+        self._generation = 0
+        self._last_notes: dict[str, float] = {}
+
+    def _note(self, text: str, every: float = 40.0) -> None:
+        now = time.monotonic()
+        key = text[:80]
+        if now - self._last_notes.get(key, 0) < every:
+            return
+        self._last_notes[key] = now
+        self.on_status(text)
 
     def start(
         self,
@@ -46,13 +56,18 @@ class DonatePayClient:
         currency: str = "RUB",
         widget_token: str = "",
     ) -> None:
-        self.stop()
-        self.api_token = extract_token(api_token or "")
-        self.widget_token = extract_token(widget_token or "")
-        if "widget.donatepay" in (api_token or "").lower() or "alert-box" in (api_token or "").lower():
-            self.widget_token = self.widget_token or extract_token(api_token)
+        self._generation += 1
+        gen = self._generation
+        self._stop.set()
+        raw_api = api_token or ""
+        raw_widget = widget_token or ""
+        self.widget_token = extract_token(raw_widget)
+        self.api_token = extract_token(raw_api)
+        if "widget.donatepay" in raw_api.lower() or "alert-box" in raw_api.lower() or raw_api.strip().startswith("http"):
+            self.widget_token = self.widget_token or extract_token(raw_api)
             self.api_token = ""
-        self.poll_interval_sec = max(5.0, float(poll_interval_sec or 8))
+            self.on_status("DonatePay: в поле API была ссылка виджета — слушаю виджет, API не трогаю")
+        self.poll_interval_sec = max(20.0, float(poll_interval_sec or 20)) if self.api_token else max(5.0, float(poll_interval_sec or 8))
         self.currency = currency or "RUB"
         self.connected = False
         if not self.api_token and not self.widget_token:
@@ -60,29 +75,44 @@ class DonatePayClient:
             return
         self._stop.clear()
         self._seen.clear()
-        threading.Thread(target=self._run, name="donatepay", daemon=True).start()
+        threading.Thread(target=self._run, args=(gen,), name="donatepay", daemon=True).start()
 
     def stop(self) -> None:
+        self._generation += 1
         self._stop.set()
         self.connected = False
 
-    def _run(self) -> None:
+    def _run(self, gen: int) -> None:
+        if gen != self._generation:
+            return
         try:
-            asyncio.run(self._main())
+            asyncio.run(self._main(gen))
         except Exception as exc:
-            self.on_status(f"DonatePay ошибка: {exc}")
+            if gen == self._generation:
+                self.on_status(f"DonatePay ошибка: {exc}")
 
-    async def _main(self) -> None:
+    def _alive(self, gen: int) -> bool:
+        return (not self._stop.is_set()) and gen == self._generation
+
+    async def _nap(self, seconds: float, gen: int) -> bool:
+        deadline = time.monotonic() + max(0.0, seconds)
+        while time.monotonic() < deadline:
+            if not self._alive(gen):
+                return False
+            await asyncio.sleep(0.25)
+        return self._alive(gen)
+
+    async def _main(self, gen: int) -> None:
         tasks = []
         if self.api_token:
-            tasks.append(asyncio.create_task(self._poll_loop()))
+            tasks.append(asyncio.create_task(self._poll_loop(gen)))
         if self.widget_token:
-            tasks.append(asyncio.create_task(self._widget_loop()))
+            tasks.append(asyncio.create_task(self._widget_loop(gen)))
         if not tasks:
             return
         await asyncio.gather(*tasks)
 
-    async def _poll_loop(self) -> None:
+    async def _poll_loop(self, gen: int) -> None:
         params = {
             "access_token": self.api_token,
             "limit": 25,
@@ -93,23 +123,37 @@ class DonatePayClient:
         async with httpx.AsyncClient(timeout=20) as client:
             try:
                 user = (await client.get(f"{DP_API}/user", params={"access_token": self.api_token})).json()
-                if str(user.get("status") or "").lower() not in {"success", "ok", "1"}:
-                    self.on_status(f"DonatePay API: {user.get('message') or user.get('status') or 'токен не принят'}")
-                else:
-                    name = (user.get("data") or {}).get("name") or (user.get("data") or {}).get("id") or "стример"
-                    self.on_status(f"DonatePay: вход как {name}, опрос раз в {self.poll_interval_sec:.0f} сек")
-                    self.connected = True
+                message = str(user.get("message") or user.get("status") or "")
+                if "incorrect" in message.lower() or str(user.get("status") or "").lower() not in {"success", "ok", "1"}:
+                    self.on_status(
+                        "DonatePay: это не API-ключ. Вставь ключ со страницы donatepay.ru/page/api. "
+                        "Ссылку виджета — в соседнее поле."
+                    )
+                    if not self.widget_token:
+                        self.widget_token = self.api_token
+                        await self._widget_loop(gen)
+                    return
+                name = (user.get("data") or {}).get("name") or (user.get("data") or {}).get("id") or "стример"
+                self.on_status(f"DonatePay: вход как {name}, опрос раз в {self.poll_interval_sec:.0f} сек")
+                self.connected = True
             except Exception as exc:
-                self.on_status(f"DonatePay: не удалось проверить токен ({exc}), пробую опрос донатов")
+                self._note(f"DonatePay: не удалось проверить токен ({exc}), пробую опрос донатов")
 
-            while not self._stop.is_set():
+            while self._alive(gen):
                 try:
                     resp = await client.get(f"{DP_API}/transactions", params=params)
+                    if resp.status_code == 429:
+                        self._note("DonatePay API: слишком часто, жду 45 сек")
+                        if not await self._nap(45, gen):
+                            return
+                        continue
                     resp.raise_for_status()
                     payload = resp.json()
                     status = str(payload.get("status") or "").lower()
                     if status not in {"", "success", "ok", "1"}:
-                        self.on_status(f"DonatePay API: {payload.get('message') or payload.get('status')}")
+                        self._note(f"DonatePay API: {payload.get('message') or payload.get('status')}")
+                        if "incorrect" in str(payload.get("message") or "").lower():
+                            return
                     rows = payload.get("data") or payload.get("transactions") or []
                     if isinstance(rows, dict):
                         rows = rows.get("data") or []
@@ -118,19 +162,27 @@ class DonatePayClient:
                     bootstrap = False
                     self.connected = True
                 except Exception as exc:
-                    self.on_status(f"DonatePay опрос: {exc}")
-                await asyncio.sleep(self.poll_interval_sec)
+                    text = str(exc)
+                    if "429" in text:
+                        self._note("DonatePay API: лимит запросов, жду 45 сек")
+                        if not await self._nap(45, gen):
+                            return
+                        continue
+                    self._note(f"DonatePay опрос: {exc}")
+                if not await self._nap(self.poll_interval_sec, gen):
+                    return
 
-    async def _widget_loop(self) -> None:
-        while not self._stop.is_set():
+    async def _widget_loop(self, gen: int) -> None:
+        while self._alive(gen):
             try:
                 await self._listen_widget_once()
             except Exception as exc:
-                self.on_status(f"DonatePay виджет: {exc}")
-            if self._stop.is_set():
+                self._note(f"DonatePay виджет: {exc}")
+            if not self._alive(gen):
                 return
-            self.on_status("DonatePay виджет: переподключение через 6 сек")
-            await asyncio.sleep(6)
+            self._note("DonatePay виджет: переподключение через 6 сек")
+            if not await self._nap(6, gen):
+                return
 
     async def _listen_widget_once(self) -> None:
         token = self.widget_token

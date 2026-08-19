@@ -117,25 +117,32 @@ def nade_and_crouch(cfg: dict[str, Any]) -> None:
     select = keys["grenade"]
     crouch = keys["crouch"]
     _log(f"граната: слот={select!r} бросок={throw!r} присед={crouch!r}")
-    tap_key(select, 0.12)
-    time.sleep(float(effect.get("draw_sec", 0.65)))
-    key_down(crouch)
-    time.sleep(0.12)
-    look = int(effect.get("look_down_pixels", 4200))
-    chunk = max(180, look // 10)
-    remaining = look
-    while remaining > 0:
-        step = min(chunk, remaining)
-        move_mouse(0, step)
-        remaining -= step
-        time.sleep(0.012)
-    time.sleep(0.12)
-    # Как у Фени: ПКМ — бросок под себя. ЛКМ запасной, если смотрим в пол.
-    click_mouse(throw, float(effect.get("throw_hold_sec", 0.28)))
-    time.sleep(0.08)
-    click_mouse("left", 0.14)
-    time.sleep(float(effect.get("crouch_hold_sec", 1.2)))
-    key_up(crouch)
+    crouched = False
+    try:
+        tap_key(select, 0.12)
+        time.sleep(float(effect.get("draw_sec", 0.65)))
+        key_down(crouch)
+        crouched = True
+        time.sleep(0.12)
+        look = int(effect.get("look_down_pixels", 4200))
+        chunk = max(180, look // 10)
+        remaining = look
+        while remaining > 0:
+            step = min(chunk, remaining)
+            move_mouse(0, step)
+            remaining -= step
+            time.sleep(0.012)
+        time.sleep(0.12)
+        click_mouse(throw, float(effect.get("throw_hold_sec", 0.28)))
+        time.sleep(0.08)
+        click_mouse("left", 0.14)
+        time.sleep(float(effect.get("crouch_hold_sec", 1.2)))
+    finally:
+        if crouched:
+            try:
+                key_up(crouch)
+            except Exception:
+                pass
     _log(f"граната: готово, фокус {describe_hwnd(user32.GetForegroundWindow())}")
 
 

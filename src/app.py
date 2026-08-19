@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -45,6 +46,7 @@ class App(tk.Tk):
         self.dp = DonatePayClient(self._on_donation, self.log)
         self.trula = TrulaClient(self._on_donation, self.log)
         self.webhook = WebhookServer(self._on_donation, self.log)
+        self._quiet_log_until: dict[str, float] = {}
         self._build_style()
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -56,6 +58,17 @@ class App(tk.Tk):
         self.after(0, fn)
 
     def log(self, text: str) -> None:
+        noisy = any(
+            marker in text
+            for marker in ("429", "Too Many Requests", "Incorrect token", "DonatePay опрос:", "DonatePay API:")
+        )
+        if noisy:
+            now = time.monotonic()
+            if now < self._quiet_log_until.get("dp", 0):
+                write_log(text)
+                return
+            self._quiet_log_until["dp"] = now + 30
+            text = text + "  (одинаковые ошибки DonatePay 30 сек не спамлю в окно)"
         line = write_log(text)
 
         def append() -> None:
