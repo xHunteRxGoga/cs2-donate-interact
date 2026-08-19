@@ -29,6 +29,8 @@ WM_SYSKEYUP = 0x0105
 WM_QUIT = 0x0012
 LLKHF_ALTDOWN = 0x20
 MAPVK_VK_TO_VSC = 0
+MAPVK_VSC_TO_VK = 1
+LLKHF_INJECTED = 0x10
 SW_RESTORE = 9
 SW_SHOW = 5
 HWND_TOPMOST = -1
@@ -320,13 +322,26 @@ NAME_TO_VK = {
     "enter": 0x0D,
 }
 
+for _code in range(ord("a"), ord("z") + 1):
+    NAME_TO_VK[chr(_code)] = _code - 32  # VK_A=0x41
+for _digit, _vk in enumerate(range(0x30, 0x3A)):
+    NAME_TO_VK[str(_digit)] = _vk
+
 
 def vk_from_name(name: str) -> int:
     key = name.strip().lower()
     if key in NAME_TO_VK:
         return NAME_TO_VK[key]
+    if key in SCAN_BY_NAME:
+        mapped = int(user32.MapVirtualKeyW(SCAN_BY_NAME[key], MAPVK_VSC_TO_VK) or 0)
+        if mapped:
+            return mapped
     if len(key) == 1:
-        return user32.VkKeyScanW(key) & 0xFF
+        scanned = user32.VkKeyScanW(key) & 0xFF
+        if scanned and scanned != 0xFF:
+            return scanned
+        if key in SCAN_BY_NAME:
+            return int(user32.MapVirtualKeyW(SCAN_BY_NAME[key], MAPVK_VSC_TO_VK) or 0)
     if key.startswith("f") and key[1:].isdigit():
         return 0x70 + int(key[1:]) - 1
     raise ValueError(f"Неизвестная клавиша: {name}")
@@ -422,11 +437,13 @@ def move_mouse(dx: int, dy: int) -> None:
 
 
 def click_mouse(button: str = "left", hold_sec: float = 0.07) -> None:
-    kind = (button or "left").strip().lower()
-    if kind in {"right", "rbutton", "mouse2"}:
+    kind = (button or "left").strip().lower().replace(" ", "")
+    if kind in {"right", "rbutton", "mouse2", "мышь2", "мышка2", "пкм"}:
         down, up = MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP
+        kind = "right"
     else:
         down, up = MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP
+        kind = "left"
     _log(f"ввод: click {kind} hold={hold_sec:.3f}c")
     _send([_mouse_input(down)])
     time.sleep(hold_sec)
@@ -583,6 +600,7 @@ class InputGuard:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.blocked_vks: set[int] = set()
+        self.blocked_scans: set[int] = set()
         self.block_all = False
         self.kill_switch = "alt+5"
         self.panic_hotkey = "ctrl+alt+5"
@@ -598,12 +616,25 @@ class InputGuard:
         return bool(self._hook)
 
     def set_blocked_keys(self, names: Iterable[str]) -> None:
+        vks: set[int] = set()
+        scans: set[int] = set()
+        details = []
+        for name in names:
+            vk = vk_from_name(name)
+            scan = scan_from_name(name, vk)
+            vks.add(vk)
+            if scan:
+                scans.add(scan)
+            details.append(f"{name!r} vk=0x{vk:02X} scan=0x{scan:02X}")
         with self._lock:
-            self.blocked_vks = {vk_from_name(name) for name in names}
+            self.blocked_vks = vks
+            self.blocked_scans = scans
+        _log("WASD хук блокирует: " + ", ".join(details))
 
     def clear_blocked_keys(self) -> None:
         with self._lock:
             self.blocked_vks.clear()
+            self.blocked_scans.clear()
 
     def set_block_all(self, value: bool) -> None:
         with self._lock:
@@ -661,10 +692,11 @@ class InputGuard:
                 return user32.CallNextHookEx(self._hook, n_code, w_param, l_param)
             if self._app_is_foreground():
                 return user32.CallNextHookEx(self._hook, n_code, w_param, l_param)
+            injected = bool(info.flags & LLKHF_INJECTED)
             with self._lock:
                 block_all = self.block_all
-                blocked = info.vkCode in self.blocked_vks
-            if block_all or blocked:
+                blocked = (info.vkCode in self.blocked_vks) or (info.scanCode in self.blocked_scans)
+            if block_all or (blocked and not injected):
                 return 1
         return user32.CallNextHookEx(self._hook, n_code, w_param, l_param)
 

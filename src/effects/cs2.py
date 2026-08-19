@@ -114,23 +114,31 @@ def nade_and_crouch(cfg: dict[str, Any]) -> None:
     effect = cfg["effects"]["nade_and_crouch"]
     prepare_cs2_input(cfg)
     throw = keys.get("nade_throw") or "rbutton"
-    _log(f"граната: слот={keys['grenade']!r} бросок={throw!r} присед={keys['crouch']!r}")
-    tap_key(keys["grenade"], 0.1)
-    time.sleep(0.18)
-    look = int(effect.get("look_down_pixels", 3200))
-    chunk = max(200, look // 8)
+    select = keys["grenade"]
+    crouch = keys["crouch"]
+    _log(f"граната: слот={select!r} бросок={throw!r} присед={crouch!r}")
+    # CS2 долго достаёт гранату — 0.18с мало, HE ещё не в руках.
+    tap_key(select, 0.12)
+    time.sleep(0.22)
+    tap_key(select, 0.12)
+    time.sleep(float(effect.get("draw_sec", 0.65)))
+    key_down(crouch)
+    time.sleep(0.12)
+    look = int(effect.get("look_down_pixels", 4200))
+    chunk = max(180, look // 10)
     remaining = look
     while remaining > 0:
         step = min(chunk, remaining)
         move_mouse(0, step)
         remaining -= step
-        time.sleep(0.01)
+        time.sleep(0.012)
+    time.sleep(0.12)
+    # Как у Фени: ПКМ — бросок под себя. ЛКМ запасной, если смотрим в пол.
+    click_mouse(throw, float(effect.get("throw_hold_sec", 0.28)))
     time.sleep(0.08)
-    key_down(keys["crouch"])
-    time.sleep(0.05)
-    click_mouse(throw, 0.1)
+    click_mouse("left", 0.14)
     time.sleep(float(effect.get("crouch_hold_sec", 1.2)))
-    key_up(keys["crouch"])
+    key_up(crouch)
     _log(f"граната: готово, фокус {describe_hwnd(user32.GetForegroundWindow())}")
 
 

@@ -95,8 +95,10 @@ DEFAULTS: dict[str, Any] = {
             "enabled": True,
             "amount": 500,
             "cooldown_sec": 30,
-            "look_down_pixels": 3200,
+            "look_down_pixels": 4200,
             "crouch_hold_sec": 1.2,
+            "draw_sec": 0.65,
+            "throw_hold_sec": 0.28,
         },
         "kill_cs2": {"enabled": True, "amount": 1000, "cooldown_sec": 180},
         "minecraft_takeover": {
