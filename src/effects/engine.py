@@ -6,6 +6,11 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+try:
+    import winsound
+except ImportError:
+    winsound = None  # type: ignore
+
 from src.config import EFFECT_ORDER, EFFECT_TITLES, get_effect, resolve_video_path
 from src.donations.models import Donation
 from src.effects.cs2 import (
@@ -84,12 +89,44 @@ class EffectEngine:
         self.current_effect = ""
         self.log("Аварийный стоп: эффекты сброшены.")
 
+    def announce_donation(self, donation: Donation, effect_id: str | None) -> None:
+        cfg = self.get_config()
+        overlay = cfg.get("overlay") or {}
+        title = EFFECT_TITLES.get(effect_id or "", "") or "Донат получен"
+        if not effect_id:
+            title = "Донат получен — сумма не совпала с эффектом"
+        amount = f"{donation.amount:g} {donation.currency}"
+        self.log(
+            f"приложение увидело донат: {donation.username} — {amount} "
+            f"[{donation.source}] id={donation.donation_id or '-'} → {title}"
+        )
+        if overlay.get("enabled", True):
+            self.toast.show(
+                donation.username,
+                title,
+                amount,
+                float(overlay.get("duration_sec") or 5.5),
+                wait=False,
+            )
+        if overlay.get("beep", True):
+            threading.Thread(target=self._beep, daemon=True).start()
+        if overlay.get("ping_flash", True) and effect_id != "flash":
+            threading.Thread(target=lambda: self.flash.ping(0.45), daemon=True).start()
+
+    def _beep(self) -> None:
+        try:
+            if winsound:
+                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+        except Exception:
+            pass
+
     def enqueue_donation(self, donation: Donation) -> None:
         cfg = self.get_config()
-        if not cfg["general"]["enabled"] or self.paused:
-            self.log(f"Донат {donation.amount:g} {donation.currency} от {donation.username} пропущен: система выключена")
-            return
         effect_id = self._match_effect(cfg, donation)
+        self.announce_donation(donation, effect_id)
+        if not cfg["general"]["enabled"] or self.paused:
+            self.log("эффект не запущен: система выключена или паника. Табличка уже должна быть на экране.")
+            return
         if not effect_id:
             return
         reason = "тест" if donation.is_test else f"донат {donation.amount:g} {donation.currency}"
@@ -134,7 +171,7 @@ class EffectEngine:
             if not effect.get("enabled"):
                 continue
             amount = float(effect["amount"])
-            if mode == "exact" and abs(donation.amount - amount) < 0.05:
+            if mode == "exact" and _amount_close(donation.amount, amount):
                 matches.append((amount, effect_id))
             elif mode == "threshold" and donation.amount + 1e-9 >= amount:
                 matches.append((amount, effect_id))
@@ -224,28 +261,28 @@ class EffectEngine:
                 self.log("Эффект отменён")
                 return
 
-        if job.effect_id != "minecraft_takeover":
-            if cfg["general"]["require_cs2_running"] and not is_cs2_running(cfg["cs2"]["process_name"]):
-                self.log("CS2 не запущен — эффект пропущен")
-                return
-            if (not is_test) and delay <= 0 and cfg["general"]["require_cs2_focused"] and not is_cs2_focused(cfg["cs2"]["window_title"]):
-                self.log("CS2 не в фокусе — эффект пропущен")
-                return
-
         self.busy = True
         self.current_effect = job.effect_id
-        self.log(f"Диагностика перед эффектом: {diagnose_cs2(cfg, self.guard.hook_ok())}")
         overlay_cfg = cfg.get("overlay") or {}
-        if overlay_cfg.get("enabled", True):
+        if overlay_cfg.get("enabled", True) and (is_test or not job.donation):
             who = job.donation.username if job.donation else "Тест"
             amount = ""
             if job.donation:
                 amount = f"{job.donation.amount:g} {job.donation.currency}"
-            elif is_test:
+            else:
                 amount = "тест"
-            self.toast.show(who, EFFECT_TITLES[job.effect_id], amount, float(overlay_cfg.get("duration_sec") or 4.5))
+            self.toast.show(who, EFFECT_TITLES[job.effect_id], amount, float(overlay_cfg.get("duration_sec") or 5.5), wait=False)
             self.log(f"оверлей: {who} → {EFFECT_TITLES[job.effect_id]} {amount}")
-            time.sleep(0.08)
+
+        needs_game = job.effect_id not in {"flash", "minecraft_takeover"}
+        if needs_game and cfg["general"]["require_cs2_running"] and not is_cs2_running(cfg["cs2"]["process_name"]):
+            self.log("CS2 не запущен — клавиши пропущены. Табличка уже должна быть видна.")
+            return
+        if needs_game and (not is_test) and delay <= 0 and cfg["general"]["require_cs2_focused"] and not is_cs2_focused(cfg["cs2"]["window_title"]):
+            self.log("CS2 не в фокусе — клавиши пропущены. Табличка уже должна быть видна.")
+            return
+
+        self.log(f"Диагностика перед эффектом: {diagnose_cs2(cfg, self.guard.hook_ok())}")
         active = foreground_title() or "(нет)"
         if job.effect_id not in {"flash", "kill_cs2", "minecraft_takeover"}:
             if not is_cs2_focused(cfg["cs2"]["window_title"]):
@@ -310,3 +347,9 @@ class EffectEngine:
 
     def cooldown_left(self, effect_id: str) -> float:
         return max(0.0, self._cooldowns.get(effect_id, 0) - time.time())
+
+
+def _amount_close(got: float, wanted: float) -> bool:
+    if abs(got - wanted) < 1.01:
+        return True
+    return round(got) == round(wanted)

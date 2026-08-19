@@ -7,6 +7,7 @@ from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
 from src.donations.models import Donation
+from src.donations.parse import donation_from_payload, iter_donation_dicts
 
 
 class WebhookServer:
@@ -35,14 +36,22 @@ class WebhookServer:
                     self.send_response(400)
                     self.end_headers()
                     return
-                donation = Donation(
-                    username=str(body.get("username") or "Тест"),
-                    amount=float(body.get("amount") or 0),
-                    currency=str(body.get("currency") or "RUB"),
-                    message=str(body.get("message") or ""),
-                    source="webhook",
-                )
-                handler_on_donation(donation)
+                sent = False
+                for row in iter_donation_dicts(body) or ([body] if isinstance(body, dict) else []):
+                    item = donation_from_payload(row, "webhook") if isinstance(row, dict) else None
+                    if item:
+                        handler_on_donation(item)
+                        sent = True
+                if not sent and isinstance(body, dict):
+                    handler_on_donation(
+                        Donation(
+                            username=str(body.get("username") or "Тест"),
+                            amount=float(body.get("amount") or 0),
+                            currency=str(body.get("currency") or "RUB"),
+                            message=str(body.get("message") or ""),
+                            source="webhook",
+                        )
+                    )
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -77,7 +86,7 @@ class WebhookServer:
         self._server = ThreadingHTTPServer((host, port), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, name="webhook", daemon=True)
         self._thread.start()
-        self.on_status(f"Локальный тест: http://{host}:{port}/donate")
+        self.on_status(f"Локальный тест: http://{host}:{port}/donate?amount=100")
 
     def stop(self) -> None:
         if self._server:

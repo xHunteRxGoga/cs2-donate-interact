@@ -7,6 +7,42 @@ from urllib.parse import parse_qs, urlparse
 from src.donations.models import Donation
 
 
+_AMOUNT_KEYS = (
+    "amount_main",
+    "amount",
+    "amount_formatted",
+    "sum",
+    "summa",
+    "value",
+    "to_cash",
+    "cash",
+    "price",
+    "paid",
+    "payed",
+    "donation_amount",
+    "donate_amount",
+    "sum_rub",
+    "amount_rub",
+)
+
+_NAME_KEYS = (
+    "username",
+    "name",
+    "user_name",
+    "nickname",
+    "nick",
+    "what",
+    "from",
+    "donor",
+    "donator",
+    "sender",
+)
+
+_MESSAGE_KEYS = ("message", "comment", "text", "msg", "donation_message")
+
+_ID_KEYS = ("id", "donation_id", "alert_id", "transaction_id", "uuid", "event_id")
+
+
 def parse_amount(value) -> float:
     if value is None or value is False:
         return 0.0
@@ -40,13 +76,23 @@ def extract_token(value: str) -> str:
         parsed = urlparse(raw)
         query = parse_qs(parsed.query)
         fragment = parse_qs(parsed.fragment)
-        for key in ("token", "api_token", "access_token", "key", "widget_token", "secret"):
+        for key in (
+            "token",
+            "api_token",
+            "access_token",
+            "key",
+            "widget_token",
+            "secret",
+            "widget_id",
+            "id",
+            "hash",
+        ):
             if query.get(key):
                 return query[key][0].strip()
             if fragment.get(key):
                 return fragment[key][0].strip()
-        path = parsed.path.rstrip("/").split("/")
-        if path and path[-1] and path[-1] not in {
+        path = [part for part in parsed.path.rstrip("/").split("/") if part]
+        skip = {
             "widget",
             "widgets",
             "alert",
@@ -54,7 +100,16 @@ def extract_token(value: str) -> str:
             "overlay",
             "alert-box",
             "notifications",
-        }:
+            "dp",
+            "donate",
+            "donation",
+            "v1",
+            "api",
+            "me",
+            "w",
+            "o",
+        }
+        if path and path[-1] and path[-1].lower() not in skip:
             return path[-1]
     return raw
 
@@ -91,7 +146,7 @@ def iter_donation_dicts(payload) -> list[dict]:
         return result
     if not isinstance(payload, dict):
         return []
-    for key in ("notification", "donation", "donate", "alert", "vars"):
+    for key in ("notification", "donation", "donate", "alert", "vars", "event", "payload"):
         nested = payload.get(key)
         if isinstance(nested, dict) and _looks_like_donation(nested):
             return [nested]
@@ -103,61 +158,56 @@ def iter_donation_dicts(payload) -> list[dict]:
         inner = iter_donation_dicts(payload["data"])
         if inner:
             return inner
+    for key in ("items", "results", "donations", "alerts", "events", "transactions", "last"):
+        nested = payload.get(key)
+        if isinstance(nested, list) and nested:
+            inner = iter_donation_dicts(nested)
+            if inner:
+                return inner
     if _looks_like_donation(payload):
         return [payload]
     return []
 
 
 def _looks_like_donation(payload: dict) -> bool:
-    keys = {
-        "amount",
-        "amount_main",
-        "amount_formatted",
-        "sum",
-        "value",
-        "username",
-        "_is_test_alert",
-        "comment",
-        "message",
-    }
-    return any(key in payload for key in keys)
+    keys = set(payload)
+    return any(key in keys for key in (*_AMOUNT_KEYS, *_NAME_KEYS, "_is_test_alert", *_MESSAGE_KEYS))
 
 
 def donation_from_payload(payload: dict, source: str) -> Donation | None:
     if not isinstance(payload, dict):
         return None
-    amount = parse_amount(payload.get("amount_main"))
-    if amount <= 0:
-        amount = parse_amount(payload.get("amount"))
-    if amount <= 0:
-        amount = parse_amount(
-            payload.get("amount_formatted")
-            or payload.get("sum")
-            or payload.get("value")
-            or payload.get("to_cash")
-        )
-    currency = str(payload.get("currency") or payload.get("currency_code") or "RUB").upper().replace("RUR", "RUB")
-    if currency in {"", "₽", "РУБ", "RUBLES"}:
+    nested = payload.get("vars") if isinstance(payload.get("vars"), dict) else {}
+    merged = {**nested, **payload}
+    amount = 0.0
+    for key in _AMOUNT_KEYS:
+        amount = parse_amount(merged.get(key))
+        if amount > 0:
+            break
+    currency = str(merged.get("currency") or merged.get("currency_code") or "RUB").upper().replace("RUR", "RUB")
+    if currency in {"", "₽", "РУБ", "RUBLES", "RUBLE"}:
         currency = "RUB"
-    username = str(
-        payload.get("username")
-        or payload.get("name")
-        or payload.get("user_name")
-        or payload.get("nickname")
-        or payload.get("what")
-        or "Аноним"
-    )
-    message = str(payload.get("message") or payload.get("comment") or payload.get("text") or "")
-    donation_id = str(
-        payload.get("id")
-        or payload.get("donation_id")
-        or payload.get("alert_id")
-        or payload.get("transaction_id")
-        or ""
-    ).strip()
-    is_test = truthy(payload.get("_is_test_alert") or payload.get("is_test") or payload.get("test"))
-    alert_type = str(payload.get("alert_type") or payload.get("type") or "1")
-    if alert_type.lower() in {"follow", "subscription", "raid", "host", "cheer"} and amount <= 0:
+    username = "Аноним"
+    for key in _NAME_KEYS:
+        value = merged.get(key)
+        if value not in (None, ""):
+            username = str(value)
+            break
+    message = ""
+    for key in _MESSAGE_KEYS:
+        value = merged.get(key)
+        if value not in (None, ""):
+            message = str(value)
+            break
+    donation_id = ""
+    for key in _ID_KEYS:
+        value = merged.get(key)
+        if value not in (None, ""):
+            donation_id = str(value).strip()
+            break
+    is_test = truthy(merged.get("_is_test_alert") or merged.get("is_test") or merged.get("test"))
+    alert_type = str(merged.get("alert_type") or merged.get("type") or "1").lower()
+    if alert_type in {"follow", "subscription", "subscriber", "raid", "host", "cheer", "media", "music"} and amount <= 0:
         return None
     if amount <= 0 and not is_test:
         return None
@@ -170,3 +220,42 @@ def donation_from_payload(payload: dict, source: str) -> Donation | None:
         donation_id=donation_id,
         is_test=is_test,
     )
+
+
+def payloads_from_html(html: str) -> list:
+    if not html:
+        return []
+    found: list = []
+    for match in re.finditer(
+        r'<script[^>]*id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>',
+        html,
+        re.S | re.I,
+    ):
+        try:
+            found.append(json.loads(match.group(1)))
+        except json.JSONDecodeError:
+            continue
+    for match in re.finditer(
+        r"window\.__[A-Z0-9_]+__\s*=\s*(\{.*?\});\s*(?:</script>|$)",
+        html,
+        re.S,
+    ):
+        try:
+            found.append(json.loads(match.group(1)))
+        except json.JSONDecodeError:
+            continue
+    for match in re.finditer(r"(?:var|let|const)\s+\w*(?:donation|alert|widget)\w*\s*=\s*(\{.*?\}|\[.*?\]);", html, re.S | re.I):
+        try:
+            found.append(json.loads(match.group(1)))
+        except json.JSONDecodeError:
+            continue
+    if not found:
+        match = re.search(r"(\{.*\}|\[.*\])", html, re.S)
+        if match:
+            blob = match.group(1)
+            if len(blob) < 400000:
+                try:
+                    found.append(json.loads(blob))
+                except json.JSONDecodeError:
+                    pass
+    return found

@@ -24,7 +24,7 @@ DP_SOCKETS = (
 )
 
 _SUCCESS = {"", "success", "1", "ok", "paid", "done", "true"}
-_DONATION_TYPES = {"", "donation", "donate", "donations"}
+_SKIP_TYPES = {"media", "music", "follow", "subscription", "subscriber", "raid", "host", "cheer", "sticker"}
 
 
 class DonatePayClient:
@@ -108,6 +108,7 @@ class DonatePayClient:
             tasks.append(asyncio.create_task(self._poll_loop(gen)))
         if self.widget_token:
             tasks.append(asyncio.create_task(self._widget_loop(gen)))
+            tasks.append(asyncio.create_task(self._widget_poll(gen)))
         if not tasks:
             return
         await asyncio.gather(*tasks)
@@ -184,6 +185,40 @@ class DonatePayClient:
             if not await self._nap(6, gen):
                 return
 
+    async def _widget_poll(self, gen: int) -> None:
+        urls = [
+            DP_WIDGET.format(self.widget_token),
+            f"https://widget.donatepay.ru/alert-box/data/{self.widget_token}",
+            f"https://donatepay.ru/api/v1/notifications?access_token={self.widget_token}",
+        ]
+        bootstrap: dict[str, set[str]] = {}
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            while self._alive(gen):
+                for url in urls:
+                    try:
+                        resp = await client.get(url, headers={"Accept": "application/json, text/html"})
+                        if resp.status_code >= 400:
+                            continue
+                        try:
+                            payload = resp.json()
+                        except Exception:
+                            payload = None
+                        rows = iter_donation_dicts(payload) if payload is not None else []
+                        first = url not in bootstrap
+                        seen = bootstrap.setdefault(url, set())
+                        for row in rows:
+                            marker = str(row.get("id") or row.get("donation_id") or "") or str(row)[:120]
+                            if marker in seen:
+                                continue
+                            seen.add(marker)
+                            if first:
+                                continue
+                            self._handle_row(row, bootstrap=False, source="donatepay-widget-poll")
+                    except Exception:
+                        continue
+                if not await self._nap(5, gen):
+                    return
+
     async def _listen_widget_once(self) -> None:
         token = self.widget_token
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
@@ -255,11 +290,12 @@ class DonatePayClient:
     def _handle_row(self, row: dict, bootstrap: bool, source: str) -> None:
         if not isinstance(row, dict):
             return
-        status = str(row.get("status") or "").lower()
+        vars_ = row.get("vars") if isinstance(row.get("vars"), dict) else {}
+        status = str(row.get("status") or vars_.get("status") or "").lower()
         if status not in _SUCCESS:
             return
-        dtype = str(row.get("type") or "donation").lower()
-        if dtype not in _DONATION_TYPES:
+        dtype = str(row.get("type") or vars_.get("type") or "donation").lower()
+        if dtype in _SKIP_TYPES:
             return
         donation_id = str(row.get("id") or row.get("donation_id") or "")
         if donation_id and donation_id in self._seen:

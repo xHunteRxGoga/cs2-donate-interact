@@ -206,6 +206,7 @@ class App(tk.Tk):
         ttk.Button(bar, text="Паника: выключить всё", command=self._panic).pack(side="left")
         ttk.Button(bar, text="Включить эффекты", command=self._resume).pack(side="left", padx=8)
         ttk.Button(bar, text="Скопировать лог", command=self._copy_log).pack(side="right")
+        ttk.Button(bar, text="Проверить табличку", command=self._test_overlay).pack(side="right", padx=8)
 
     def _card(self, parent: tk.Widget) -> ttk.Frame:
         frame = ttk.Frame(parent, style="Card.TFrame")
@@ -371,6 +372,13 @@ class App(tk.Tk):
         ttk.Checkbutton(grid, text="Эффекты включены", variable=self.enabled_var).grid(row=0, column=0, sticky="w", pady=4)
         ttk.Checkbutton(grid, text="Только если CS2 запущен", variable=self.require_running).grid(row=1, column=0, sticky="w", pady=4)
         ttk.Checkbutton(grid, text="Только если CS2 в фокусе", variable=self.require_focus).grid(row=2, column=0, sticky="w", pady=4)
+        overlay = self.cfg.get("overlay") or {}
+        self.overlay_enabled = tk.BooleanVar(value=bool(overlay.get("enabled", True)))
+        self.overlay_beep = tk.BooleanVar(value=bool(overlay.get("beep", True)))
+        self.overlay_ping = tk.BooleanVar(value=bool(overlay.get("ping_flash", True)))
+        ttk.Checkbutton(grid, text="Табличка на каждый донат", variable=self.overlay_enabled).grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Checkbutton(grid, text="Звук при донате", variable=self.overlay_beep).grid(row=4, column=0, sticky="w", pady=4)
+        ttk.Checkbutton(grid, text="Короткая вспышка, если табличка под игрой", variable=self.overlay_ping).grid(row=5, column=0, sticky="w", pady=4)
 
         ttk.Label(grid, text="Режим суммы").grid(row=0, column=1, sticky="e", padx=8)
         self.amount_mode = ttk.Combobox(grid, values=["exact", "threshold"], state="readonly", width=14)
@@ -468,7 +476,8 @@ class App(tk.Tk):
         lines = [
             "Кнопка «Привязать аккаунт» открывает кабинет площадки. Скопируй токен/ссылку, вернись сюда и подтверди —",
             "приложение само вставит из буфера, сохранит и начнёт слушать донаты. Можно подключить одну площадку или все три.",
-            "Тест на вкладке «Эффекты» проверяет только CS2. Живой донат идёт другим путём — без привязки эффекта не будет.",
+            "Тест на вкладке «Эффекты» проверяет только CS2. Живой донат всегда даёт звук и табличку снизу — если их нет, приложение донат не увидело.",
+            "Кнопка «Проверить табличку» внизу показывает плашку без CS2. Если её не видно поверх игры — поставь CS2 «Во весь экран в окне».",
         ]
         for line in lines:
             ttk.Label(parent, text=line, style="Muted.TLabel").pack(anchor="w", pady=3)
@@ -558,7 +567,7 @@ class App(tk.Tk):
         box = ttk.Frame(parent)
         box.pack(fill="x", pady=8)
         ttk.Label(box, text="Нужна ссылка виджета алертов, которую вставляют в OBS как Browser Source.").grid(row=0, column=0, columnspan=3, sticky="w", pady=4)
-        ttk.Label(box, text="Не страница доната /dp/..., а именно overlay/alerts виджет. «Привязать аккаунт» откроет кабинет.", style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        ttk.Label(box, text="Лучше OBS-ссылка алерта. Страницу /dp/... тоже можно вставить — будет опрос, но виджет надёжнее.", style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
         ttk.Button(box, text="Привязать аккаунт Trula", style="Accent.TButton", command=lambda: self._bind_account("trula")).grid(row=2, column=1, sticky="w", pady=4)
         self.trula_enabled = tk.BooleanVar(value=bool(trula.get("enabled", True)))
         ttk.Checkbutton(box, text="Слушать Trula", variable=self.trula_enabled).grid(row=3, column=1, sticky="w", pady=4)
@@ -633,7 +642,8 @@ class App(tk.Tk):
         )
         self.log_box.pack(fill="both", expand=True, pady=8)
         self.log("Приложение запущено. Дроп/мышь/граната работают только если CS2 в фокусе.")
-        self.log("Для клавиш в CS2 запусти run-admin.bat. Игра — «Во весь экран в окне».")
+        self.log("Для клавиш в CS2 запусти run-admin.bat. Игра — «Во весь экран в окне», не эксклюзивный полный экран.")
+        self.log("Живой донат всегда даёт звук + табличку снизу. Если в логе нет «приложение увидело донат» — площадка не привязана.")
         self.log(f"Файл лога: {LOG_PATH}")
 
     def _collect(self) -> None:
@@ -647,6 +657,9 @@ class App(tk.Tk):
         self.cfg["general"]["max_queue"] = int(self.max_queue.get() or 5)
         self.cfg["general"]["kill_switch"] = self.kill_switch.get().strip() or "alt+5"
         self.cfg["general"]["panic_hotkey"] = self.panic_hotkey.get().strip() or "ctrl+alt+5"
+        self.cfg["overlay"]["enabled"] = self.overlay_enabled.get() if hasattr(self, "overlay_enabled") else True
+        self.cfg["overlay"]["beep"] = self.overlay_beep.get() if hasattr(self, "overlay_beep") else True
+        self.cfg["overlay"]["ping_flash"] = self.overlay_ping.get() if hasattr(self, "overlay_ping") else True
         self.cfg["effects"]["flash"]["mode"] = self.flash_mode.get()
         self.cfg["effects"]["mouse_jerk"]["intensity"] = int(self.jerk_intensity.get() or 900)
         self.cfg["effects"]["nade_and_crouch"]["look_down_pixels"] = int(self.look_down.get() or 3200)
@@ -768,9 +781,9 @@ class App(tk.Tk):
                 "Откроется кабинет Trula.\n\n"
                 "1. Войди аккаунтом стримера.\n"
                 "2. Виджеты → алерты/оповещения.\n"
-                "3. Скопируй ссылку, которую вставляют в OBS (Browser Source).\n"
+                "3. Скопируй ссылку, которую вставляют в OBS как Browser Source (целиком).\n"
                 "4. Нажми OK — приложение вставит ссылку и начнёт слушать.\n\n"
-                "Не копируй страницу доната /dp/..."
+                "Страница доната /dp/... — запасной вариант. Надёжнее именно OBS-ссылка алерта."
             ),
         }
         for url in pages[kind]:
@@ -865,12 +878,21 @@ class App(tk.Tk):
             self.webhook.start(self.cfg["webhook"]["host"], int(self.cfg["webhook"]["port"]))
 
     def _on_donation(self, donation: Donation) -> None:
-        kind = "тест-алерт" if donation.is_test else "донат"
+        kind = "тест-алерт" if donation.is_test else "ДОНАТ"
         self.log(
             f"{kind}: {donation.username} — {donation.amount:g} {donation.currency} "
             f"id={donation.donation_id or '-'} source={donation.source} msg={donation.message!r}"
         )
         self.engine.enqueue_donation(donation)
+
+    def _test_overlay(self) -> None:
+        donation = Donation(username="Проверка", amount=100, currency="RUB", source="manual", is_test=True)
+        self.engine.announce_donation(donation, "flash")
+        self.log(
+            "Проверка таблички: снизу должна появиться широкая плашка и короткий звук. "
+            "Если её не видно поверх CS2 — поставь игру «Во весь экран в окне». "
+            "С античитом клавиши могут не идти, табличка и вспышка должны."
+        )
 
     def _copy_log(self) -> None:
         text = read_tail()

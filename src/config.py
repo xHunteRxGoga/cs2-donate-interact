@@ -28,7 +28,9 @@ DEFAULTS: dict[str, Any] = {
     },
     "overlay": {
         "enabled": True,
-        "duration_sec": 4.5,
+        "duration_sec": 5.5,
+        "beep": True,
+        "ping_flash": True,
     },
     "donationalerts": {
         "access_token": "",
@@ -38,12 +40,12 @@ DEFAULTS: dict[str, Any] = {
         "redirect_uri": "http://127.0.0.1:53682/callback",
         "mode": "websocket",
     },
-        "donatepay": {
-            "enabled": True,
-            "api_token": "",
-            "widget_token": "",
-            "poll_interval_sec": 8,
-        },
+    "donatepay": {
+        "enabled": True,
+        "api_token": "",
+        "widget_token": "",
+        "poll_interval_sec": 8,
+    },
     "trula": {
         "enabled": True,
         "widget_url": "",

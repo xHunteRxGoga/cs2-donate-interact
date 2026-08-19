@@ -25,14 +25,38 @@ class FlashController:
         self._stop = threading.Event()
         self._original: RampArray | None = None
         self._overlay_closer: Callable[[], None] | None = None
+        self._busy = False
 
     def cancel(self) -> None:
         self._stop.set()
         self._restore_gamma()
         self._close_overlay()
 
-    def run(self, duration_sec: float, mode: str, fade_out_sec: float) -> None:
+    def ping(self, duration_sec: float = 0.45) -> None:
+        """Короткая гамма-вспышка: видна даже если табличка спряталась под exclusive fullscreen / античитом."""
+        if self._busy:
+            return
+        self._busy = True
         self._stop.clear()
+        try:
+            self._save_gamma()
+            self._apply_gamma(1.0)
+            end = time.time() + max(0.15, duration_sec)
+            while time.time() < end and not self._stop.is_set():
+                time.sleep(0.03)
+            self._restore_gamma()
+        finally:
+            self._busy = False
+
+    def run(self, duration_sec: float, mode: str, fade_out_sec: float) -> None:
+        self._busy = True
+        self._stop.clear()
+        try:
+            self._run(duration_sec, mode, fade_out_sec)
+        finally:
+            self._busy = False
+
+    def _run(self, duration_sec: float, mode: str, fade_out_sec: float) -> None:
         use_gamma = mode in {"gamma", "gamma_and_overlay"}
         use_overlay = mode in {"overlay", "gamma_and_overlay"}
         if use_gamma:

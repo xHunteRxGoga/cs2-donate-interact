@@ -127,12 +127,19 @@ class DonationAlertsClient:
         if gen and gen != self._generation:
             return
         try:
-            asyncio.run(self._api_main())
+            asyncio.run(self._api_main(gen))
         except Exception as exc:
             if gen == self._generation:
                 self.on_status(f"DonationAlerts API: {exc}")
 
     async def _widget_loop(self, gen: int = 0) -> None:
+        await asyncio.gather(
+            self._widget_socket(gen),
+            self._widget_poll(gen),
+            return_exceptions=True,
+        )
+
+    async def _widget_socket(self, gen: int = 0) -> None:
         hosts = list(DA_WIDGET_HOSTS)
         raw = RawSocketIO(self._on_raw_event, self.on_status)
         emits = [
@@ -166,6 +173,54 @@ class DonationAlertsClient:
                     self.on_status("DonationAlerts: сокет отключился, переподключаюсь")
                     await asyncio.sleep(3)
 
+    async def _widget_poll(self, gen: int = 0) -> None:
+        token = self.widget_token
+        if not token:
+            return
+        stop = _GenStop(self, gen)
+        urls = [
+            f"{DA_API}/alerts/donations",
+            f"https://www.donationalerts.com/widget/lastdonations?alert_type=1&limit=20&token={token}",
+        ]
+        headers_list = [
+            {"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            {"Accept": "application/json, text/html"},
+        ]
+        bootstrap: dict[str, set[str]] = {}
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            while not stop.is_set():
+                for url, headers in zip(urls, headers_list):
+                    try:
+                        resp = await client.get(url, headers=headers)
+                        if resp.status_code >= 400:
+                            continue
+                        try:
+                            payload = resp.json()
+                        except Exception:
+                            payload = None
+                        rows = []
+                        if isinstance(payload, dict):
+                            rows = payload.get("data") or []
+                            if not rows:
+                                rows = iter_donation_dicts(payload)
+                        elif isinstance(payload, list):
+                            rows = payload
+                        first = url not in bootstrap
+                        seen = bootstrap.setdefault(url, set())
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                continue
+                            marker = str(row.get("id") or row.get("donation_id") or "") or str(row)[:120]
+                            if marker in seen:
+                                continue
+                            seen.add(marker)
+                            if first:
+                                continue
+                            self._emit_donation(row, "donationalerts-widget-poll")
+                    except Exception:
+                        continue
+                await asyncio.sleep(5)
+
     def _on_raw_event(self, event: str, args) -> None:
         self.connected = True
         if event in {"connect", "disconnect", "ping", "pong"}:
@@ -175,19 +230,20 @@ class DonationAlertsClient:
         except Exception as exc:
             self.on_status(f"DonationAlerts {event}: {exc}")
 
-    async def _api_main(self) -> None:
+    async def _api_main(self, gen: int = 0) -> None:
         if self.mode == "poll":
-            await self._poll_loop()
+            await self._poll_loop(gen)
             return
         try:
-            await asyncio.gather(self._websocket_loop(), self._poll_loop(), return_exceptions=True)
+            await asyncio.gather(self._websocket_loop(gen), self._poll_loop(gen), return_exceptions=True)
         except Exception as exc:
             self.on_status(f"DonationAlerts WebSocket: {exc}, оставляю опрос")
-            await self._poll_loop()
+            await self._poll_loop(gen)
 
-    async def _websocket_loop(self) -> None:
+    async def _websocket_loop(self, gen: int = 0) -> None:
         headers = {"Authorization": f"Bearer {self.access_token}"}
-        while not self._stop.is_set():
+        stop = _GenStop(self, gen)
+        while not stop.is_set():
             try:
                 async with httpx.AsyncClient(timeout=20) as client:
                     user = (await client.get(f"{DA_API}/user/oauth", headers=headers)).json()["data"]
@@ -217,14 +273,14 @@ class DonationAlertsClient:
                     )
                     self.on_status("DonationAlerts: API WebSocket подключен")
                     self.connected = True
-                    while not self._stop.is_set():
+                    while not stop.is_set():
                         try:
                             raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
                         except asyncio.TimeoutError:
                             continue
                         self._handle_ws_message(raw)
             except Exception as exc:
-                if self._stop.is_set():
+                if stop.is_set():
                     return
                 self.on_status(f"DonationAlerts API сокет: {exc}, повтор")
                 await asyncio.sleep(5)
@@ -243,12 +299,13 @@ class DonationAlertsClient:
         ):
             self._emit_donation(donation, "donationalerts")
 
-    async def _poll_loop(self) -> None:
+    async def _poll_loop(self, gen: int = 0) -> None:
         headers = {"Authorization": f"Bearer {self.access_token}"}
         self.on_status("DonationAlerts: опрос API каждые 4 сек (подстраховка)")
         bootstrap = True
+        stop = _GenStop(self, gen)
         async with httpx.AsyncClient(timeout=20) as client:
-            while not self._stop.is_set():
+            while not stop.is_set():
                 try:
                     resp = await client.get(f"{DA_API}/alerts/donations", headers=headers)
                     resp.raise_for_status()
