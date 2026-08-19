@@ -21,7 +21,7 @@ Python здесь удобнее чистого AHK: нормальная пан
 ## Как запустить
 
 1. Установи [Python 3.11+](https://www.python.org/downloads/) и отметь **Add python.exe to PATH**.
-2. Дважды нажми `run.bat` или в папке проекта:
+2. Для эффектов с клавишами (дроп, сенса, граната, WASD) дважды нажми `run-admin.bat`. Обычный `run.bat` годится для настройки, но CS2 может игнорировать G.
 
 ```bat
 python -m pip install -r requirements.txt

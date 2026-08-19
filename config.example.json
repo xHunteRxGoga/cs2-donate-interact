@@ -12,6 +12,10 @@
     "kill_switch": "alt+5",
     "panic_hotkey": "ctrl+alt+5"
   },
+  "overlay": {
+    "enabled": true,
+    "duration_sec": 4.5
+  },
   "donationalerts": {
     "access_token": "",
     "widget_token": "",
@@ -42,6 +46,7 @@
       "grenade": "4",
       "crouch": "ctrl",
       "fire": "lbutton",
+      "nade_throw": "rbutton",
       "forward": "w",
       "back": "s",
       "left": "a",

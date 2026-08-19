@@ -26,6 +26,10 @@ DEFAULTS: dict[str, Any] = {
         "kill_switch": "alt+5",
         "panic_hotkey": "ctrl+alt+5",
     },
+    "overlay": {
+        "enabled": True,
+        "duration_sec": 4.5,
+    },
     "donationalerts": {
         "access_token": "",
         "widget_token": "",
@@ -56,6 +60,7 @@ DEFAULTS: dict[str, Any] = {
             "grenade": "4",
             "crouch": "ctrl",
             "fire": "lbutton",
+            "nade_throw": "rbutton",
             "forward": "w",
             "back": "s",
             "left": "a",

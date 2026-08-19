@@ -7,6 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 from src.config import EFFECT_ORDER, EFFECT_TITLES, load_config, save_config
+from src.debuglog import LOG_PATH, read_tail, write as write_log
 from src.donations.donatepay import DonatePayClient
 from src.donations.donationalerts import DonationAlertsClient, oauth_login
 from src.donations.models import Donation
@@ -55,9 +56,13 @@ class App(tk.Tk):
         self.after(0, fn)
 
     def log(self, text: str) -> None:
+        line = write_log(text)
+
         def append() -> None:
+            if not hasattr(self, "log_box"):
+                return
             self.log_box.configure(state="normal")
-            self.log_box.insert("end", text + "\n")
+            self.log_box.insert("end", line + "\n")
             self.log_box.see("end")
             self.log_box.configure(state="disabled")
 
@@ -187,6 +192,7 @@ class App(tk.Tk):
         ttk.Button(bar, text="Аварийный стоп (Alt+5)", command=self.engine.emergency_stop).pack(side="left", padx=8)
         ttk.Button(bar, text="Паника: выключить всё", command=self._panic).pack(side="left")
         ttk.Button(bar, text="Включить эффекты", command=self._resume).pack(side="left", padx=8)
+        ttk.Button(bar, text="Скопировать лог", command=self._copy_log).pack(side="right")
 
     def _card(self, parent: tk.Widget) -> ttk.Frame:
         frame = ttk.Frame(parent, style="Card.TFrame")
@@ -583,12 +589,26 @@ class App(tk.Tk):
             entry.insert(0, keys.get(key, ""))
             entry.grid(row=i, column=1, sticky="w")
             self.key_entries[key] = entry
+        ttk.Label(box, text="Бросок гранаты под ноги").grid(row=9, column=0, sticky="e", padx=8, pady=4)
+        entry = self._entry(box, 12)
+        entry.insert(0, keys.get("nade_throw", "rbutton"))
+        entry.grid(row=9, column=1, sticky="w")
+        self.key_entries["nade_throw"] = entry
         ttk.Label(box, text="Заголовок окна CS2").grid(row=10, column=0, sticky="e", padx=8, pady=10)
         self.window_title = self._entry(box, 28)
         self.window_title.insert(0, self.cfg["cs2"]["window_title"])
         self.window_title.grid(row=10, column=1, sticky="w", pady=10)
 
     def _build_log(self) -> None:
+        row = ttk.Frame(self.tab_log)
+        row.pack(fill="x", pady=(8, 0))
+        ttk.Label(
+            row,
+            text="Этот лог пишется в файл. Скопируй и пришли, если эффект не сработал.",
+            style="Muted.TLabel",
+        ).pack(side="left")
+        ttk.Button(row, text="Скопировать лог", command=self._copy_log).pack(side="right")
+        ttk.Button(row, text="Открыть файл лога", command=self._open_log_file).pack(side="right", padx=8)
         self.log_box = tk.Text(
             self.tab_log,
             bg=ENTRY_BG,
@@ -603,8 +623,9 @@ class App(tk.Tk):
             selectforeground="#ffffff",
         )
         self.log_box.pack(fill="both", expand=True, pady=8)
-        self.log("Приложение запущено. Сначала нажми «Тест» на флешке — так проще проверить, что оверлей виден поверх CS2.")
-        self.log("Для CS2 лучше режим отображения «Во весь экран в окне», иначе белый оверлей может быть под игрой.")
+        self.log("Приложение запущено. Дроп/мышь/граната работают только если CS2 в фокусе.")
+        self.log("Для клавиш в CS2 запусти run-admin.bat. Игра — «Во весь экран в окне».")
+        self.log(f"Файл лога: {LOG_PATH}")
 
     def _collect(self) -> None:
         self.cfg["general"]["enabled"] = self.enabled_var.get()
@@ -731,8 +752,27 @@ class App(tk.Tk):
 
     def _on_donation(self, donation: Donation) -> None:
         kind = "тест-алерт" if donation.is_test else "донат"
-        self.log(f"{kind}: {donation.username} — {donation.amount:g} {donation.currency} ({donation.source})")
+        self.log(
+            f"{kind}: {donation.username} — {donation.amount:g} {donation.currency} "
+            f"id={donation.donation_id or '-'} source={donation.source} msg={donation.message!r}"
+        )
         self.engine.enqueue_donation(donation)
+
+    def _copy_log(self) -> None:
+        text = read_tail()
+        if not text and hasattr(self, "log_box"):
+            text = self.log_box.get("1.0", "end").strip()
+        if not text:
+            messagebox.showinfo("Лог", "Лог пока пустой.")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.log("Лог скопирован в буфер. Вставь его в чат, если эффект не сработал.")
+
+    def _open_log_file(self) -> None:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        LOG_PATH.touch(exist_ok=True)
+        webbrowser.open(LOG_PATH.as_uri())
 
     def _panic(self) -> None:
         self.engine.panic()

@@ -9,6 +9,7 @@ from typing import Any, Callable
 from src.config import EFFECT_ORDER, EFFECT_TITLES, get_effect, resolve_video_path
 from src.donations.models import Donation
 from src.effects.cs2 import (
+    diagnose_cs2,
     drop_weapon,
     is_cs2_focused,
     is_cs2_running,
@@ -17,8 +18,9 @@ from src.effects.cs2 import (
     nade_and_crouch,
 )
 from src.effects.flash import FlashController
-from src.effects.input_win import InputGuard, foreground_title
+from src.effects.input_win import InputGuard, foreground_title, is_admin, set_input_logger
 from src.effects.takeover import TakeoverController
+from src.effects.toast import ToastController
 
 
 @dataclass(slots=True)
@@ -35,6 +37,7 @@ class EffectEngine:
         self.ui_call = ui_call
         self.guard = InputGuard()
         self.flash = FlashController(ui_call)
+        self.toast = ToastController(ui_call)
         self.takeover = TakeoverController(self.guard)
         self.paused = False
         self.busy = False
@@ -52,8 +55,12 @@ class EffectEngine:
         cfg = self.get_config()
         self.guard.kill_switch = cfg["general"]["kill_switch"]
         self.guard.panic_hotkey = cfg["general"]["panic_hotkey"]
+        set_input_logger(self.log)
         self.guard.start()
         self._worker.start()
+        self.log(f"Диагностика при старте: {diagnose_cs2(cfg, self.guard.hook_ok())}")
+        if not is_admin():
+            self.log("ВАЖНО: приложение без прав администратора. CS2 часто игнорирует G/мышь. Закрой и запусти run-admin.bat.")
 
     def shutdown(self) -> None:
         self._stop = True
@@ -70,6 +77,7 @@ class EffectEngine:
         self._clear_queue()
         self.flash.cancel()
         self.takeover.cancel()
+        self.toast.cancel()
         self.guard.clear_blocked_keys()
         self.guard.set_block_all(False)
         self.busy = False
@@ -153,7 +161,8 @@ class EffectEngine:
             try:
                 self._run_job(job)
             except Exception as exc:
-                self.log(f"Ошибка эффекта {job.effect_id}: {exc}")
+                self.log(f"Ошибка эффекта {job.effect_id}: {type(exc).__name__}: {exc}")
+                self.log(f"Диагностика после ошибки: {diagnose_cs2(self.get_config(), self.guard.hook_ok())}")
                 self.emergency_stop()
             finally:
                 self.busy = False
@@ -221,19 +230,30 @@ class EffectEngine:
 
         self.busy = True
         self.current_effect = job.effect_id
+        self.log(f"Диагностика перед эффектом: {diagnose_cs2(cfg, self.guard.hook_ok())}")
+        overlay_cfg = cfg.get("overlay") or {}
+        if overlay_cfg.get("enabled", True):
+            who = job.donation.username if job.donation else "Тест"
+            amount = ""
+            if job.donation:
+                amount = f"{job.donation.amount:g} {job.donation.currency}"
+            elif is_test:
+                amount = "тест"
+            self.toast.show(who, EFFECT_TITLES[job.effect_id], amount, float(overlay_cfg.get("duration_sec") or 4.5))
+            self.log(f"оверлей: {who} → {EFFECT_TITLES[job.effect_id]} {amount}")
         active = foreground_title() or "(нет)"
-        if is_test and job.effect_id not in {"flash", "kill_cs2", "minecraft_takeover"}:
+        if job.effect_id not in {"flash", "kill_cs2", "minecraft_takeover"}:
             if not is_cs2_focused(cfg["cs2"]["window_title"]):
                 self.log(
                     f"CS2 не в фокусе (сейчас «{active}»). "
-                    "Клавиши уйдут не в игру — нажимай Тест и сразу Alt+Tab в CS2."
+                    "Клавиши уйдут не в игру. Запусти run-admin.bat, CS2 — «во весь экран в окне», на тесте сразу Alt+Tab."
                 )
         self.log(f"Старт: {EFFECT_TITLES[job.effect_id]} → окно «{active}»")
         self._dispatch(job.effect_id, cfg)
         if not is_test:
             self._cooldowns[job.effect_id] = time.time() + float(effect.get("cooldown_sec") or 0)
             self._global_ready_at = time.time() + float(cfg["general"].get("global_cooldown_sec") or 0)
-        self.log(f"Готово: {EFFECT_TITLES[job.effect_id]}")
+        self.log(f"Готово: {EFFECT_TITLES[job.effect_id]} | фокус «{foreground_title() or '(нет)'}»")
 
     def _dispatch(self, effect_id: str, cfg: dict[str, Any]) -> None:
         if effect_id == "flash":

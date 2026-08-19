@@ -18,6 +18,8 @@ KEYEVENTF_SCANCODE = 0x0008
 MOUSEEVENTF_MOVE = 0x0001
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
 MOUSEEVENTF_MOVE_NOCOALESCE = 0x2000
 WH_KEYBOARD_LL = 13
 WM_KEYDOWN = 0x0100
@@ -29,6 +31,13 @@ LLKHF_ALTDOWN = 0x20
 MAPVK_VK_TO_VSC = 0
 SW_RESTORE = 9
 SW_SHOW = 5
+HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
+SWP_SHOWWINDOW = 0x0040
+GWL_EXSTYLE = -20
 
 VK_SHIFT = 0x10
 VK_CONTROL = 0x11
@@ -39,6 +48,7 @@ VK_ESCAPE = 0x1B
 VK_F4 = 0x73
 VK_TAB = 0x09
 VK_LBUTTON = 0x01
+VK_RBUTTON = 0x02
 VK_SNAPSHOT = 0x2C
 VK_INSERT = 0x2D
 VK_DELETE = 0x2E
@@ -141,6 +151,30 @@ user32.EnumWindows.argtypes = [ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, 
 user32.IsWindowVisible.argtypes = [wintypes.HWND]
 user32.IsWindowVisible.restype = wintypes.BOOL
 user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.IsIconic.argtypes = [wintypes.HWND]
+user32.IsIconic.restype = wintypes.BOOL
+user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetClassNameW.restype = ctypes.c_int
+user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+user32.GetWindowRect.restype = wintypes.BOOL
+user32.SetWindowPos.argtypes = [
+    wintypes.HWND,
+    wintypes.HWND,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.UINT,
+]
+user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.GetWindowLongW.restype = ctypes.c_long
+user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+user32.SetWindowLongW.restype = ctypes.c_long
+if IS_64:
+    user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+    user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
 user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
 user32.GetMessageW.restype = ctypes.c_int
 user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
@@ -184,8 +218,90 @@ EXTENDED_VKS = {
     VK_TAB,
 }
 
+SCAN_BY_NAME = {
+    "esc": 0x01,
+    "escape": 0x01,
+    "1": 0x02,
+    "2": 0x03,
+    "3": 0x04,
+    "4": 0x05,
+    "5": 0x06,
+    "tab": 0x0F,
+    "q": 0x10,
+    "w": 0x11,
+    "e": 0x12,
+    "r": 0x13,
+    "t": 0x14,
+    "a": 0x1E,
+    "s": 0x1F,
+    "d": 0x20,
+    "f": 0x21,
+    "g": 0x22,
+    "h": 0x23,
+    "z": 0x2C,
+    "x": 0x2D,
+    "c": 0x2E,
+    "v": 0x2F,
+    "b": 0x30,
+    "ctrl": 0x1D,
+    "control": 0x1D,
+    "lctrl": 0x1D,
+    "lcontrol": 0x1D,
+    "shift": 0x2A,
+    "space": 0x39,
+    " ": 0x39,
+    "enter": 0x1C,
+}
+
+_log_fn: Callable[[str], None] | None = None
+
+
+def set_input_logger(fn: Callable[[str], None] | None) -> None:
+    global _log_fn
+    _log_fn = fn
+
+
+def _log(text: str) -> None:
+    if _log_fn:
+        _log_fn(text)
+
+
+def is_admin() -> bool:
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def get_class_name(hwnd: int) -> str:
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, buf, 256)
+    return buf.value
+
+
+def window_size(hwnd: int) -> tuple[int, int]:
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return 0, 0
+    return max(0, rect.right - rect.left), max(0, rect.bottom - rect.top)
+
+
+def describe_hwnd(hwnd: int | None) -> str:
+    if not hwnd:
+        return "нет окна"
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    w, h = window_size(hwnd)
+    title = get_window_title(hwnd) or "(без названия)"
+    klass = get_class_name(hwnd) or "?"
+    proc = _process_name(pid.value) or "?"
+    return f"hwnd=0x{hwnd:X} title={title!r} class={klass!r} proc={proc} pid={pid.value} size={w}x{h}"
+
+
 NAME_TO_VK = {
     "lbutton": VK_LBUTTON,
+    "rbutton": VK_RBUTTON,
+    "mouse2": VK_RBUTTON,
     "ctrl": VK_CONTROL,
     "control": VK_CONTROL,
     "lctrl": VK_CONTROL,
@@ -216,6 +332,13 @@ def vk_from_name(name: str) -> int:
     raise ValueError(f"Неизвестная клавиша: {name}")
 
 
+def scan_from_name(name: str, vk: int) -> int:
+    key = name.strip().lower()
+    if key in SCAN_BY_NAME:
+        return SCAN_BY_NAME[key]
+    return int(user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) or 0)
+
+
 def _send(inputs: list[INPUT]) -> int:
     if not inputs:
         return 0
@@ -223,54 +346,66 @@ def _send(inputs: list[INPUT]) -> int:
     sent = user32.SendInput(len(inputs), arr, ctypes.sizeof(INPUT))
     if sent != len(inputs):
         err = ctypes.get_last_error()
-        raise RuntimeError(f"SendInput отправил {sent}/{len(inputs)} событий, код {err}")
+        raise RuntimeError(
+            f"SendInput отправил {sent}/{len(inputs)}, код {err}, sizeof(INPUT)={ctypes.sizeof(INPUT)}"
+        )
     return sent
 
 
-def _key_input(vk: int, up: bool = False) -> INPUT:
-    scan = user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)
-    flags = KEYEVENTF_SCANCODE
+def _key_input(vk: int, scan: int, up: bool = False, scancode: bool = True) -> INPUT:
+    flags = 0
+    if scancode:
+        flags |= KEYEVENTF_SCANCODE
     if vk in EXTENDED_VKS:
         flags |= KEYEVENTF_EXTENDEDKEY
     if up:
         flags |= KEYEVENTF_KEYUP
     inp = INPUT()
     inp.type = INPUT_KEYBOARD
-    inp.union.ki = KEYBDINPUT(0, scan, flags, 0, 0)
+    inp.union.ki = KEYBDINPUT(0 if scancode else vk, scan, flags, 0, 0)
     return inp
 
 
 def tap_key(name: str, hold_sec: float = 0.08) -> None:
     vk = vk_from_name(name)
     if vk == VK_LBUTTON:
-        click_mouse()
+        click_mouse("left", hold_sec)
         return
-    _send([_key_input(vk, False)])
-    scan = user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)
-    user32.keybd_event(vk, scan, 0, 0)
+    if vk == VK_RBUTTON:
+        click_mouse("right", hold_sec)
+        return
+    scan = scan_from_name(name, vk)
+    fg = describe_hwnd(user32.GetForegroundWindow())
+    _log(f"ввод: tap {name!r} vk=0x{vk:02X} scan=0x{scan:02X} hold={hold_sec:.3f}c | фокус {fg}")
+    _send([_key_input(vk, scan, False, True)])
     time.sleep(hold_sec)
-    _send([_key_input(vk, True)])
-    user32.keybd_event(vk, scan, KEYEVENTF_KEYUP, 0)
+    _send([_key_input(vk, scan, True, True)])
 
 
 def key_down(name: str) -> None:
     vk = vk_from_name(name)
     if vk == VK_LBUTTON:
         _send([_mouse_input(MOUSEEVENTF_LEFTDOWN)])
-        user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
         return
-    _send([_key_input(vk, False)])
-    user32.keybd_event(vk, user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC), 0, 0)
+    if vk == VK_RBUTTON:
+        _send([_mouse_input(MOUSEEVENTF_RIGHTDOWN)])
+        return
+    scan = scan_from_name(name, vk)
+    _log(f"ввод: down {name!r} vk=0x{vk:02X} scan=0x{scan:02X}")
+    _send([_key_input(vk, scan, False, True)])
 
 
 def key_up(name: str) -> None:
     vk = vk_from_name(name)
     if vk == VK_LBUTTON:
         _send([_mouse_input(MOUSEEVENTF_LEFTUP)])
-        user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
         return
-    _send([_key_input(vk, True)])
-    user32.keybd_event(vk, user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC), KEYEVENTF_KEYUP, 0)
+    if vk == VK_RBUTTON:
+        _send([_mouse_input(MOUSEEVENTF_RIGHTUP)])
+        return
+    scan = scan_from_name(name, vk)
+    _log(f"ввод: up {name!r} vk=0x{vk:02X} scan=0x{scan:02X}")
+    _send([_key_input(vk, scan, True, True)])
 
 
 def _mouse_input(flags: int, dx: int = 0, dy: int = 0) -> INPUT:
@@ -284,15 +419,18 @@ def move_mouse(dx: int, dy: int) -> None:
     dx_i, dy_i = int(dx), int(dy)
     flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_MOVE_NOCOALESCE
     _send([_mouse_input(flags, dx_i, dy_i)])
-    user32.mouse_event(flags, dx_i & 0xFFFFFFFF, dy_i & 0xFFFFFFFF, 0, 0)
 
 
-def click_mouse(hold_sec: float = 0.07) -> None:
-    _send([_mouse_input(MOUSEEVENTF_LEFTDOWN)])
-    user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+def click_mouse(button: str = "left", hold_sec: float = 0.07) -> None:
+    kind = (button or "left").strip().lower()
+    if kind in {"right", "rbutton", "mouse2"}:
+        down, up = MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP
+    else:
+        down, up = MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP
+    _log(f"ввод: click {kind} hold={hold_sec:.3f}c")
+    _send([_mouse_input(down)])
     time.sleep(hold_sec)
-    _send([_mouse_input(MOUSEEVENTF_LEFTUP)])
-    user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    _send([_mouse_input(up)])
 
 
 def get_window_title(hwnd: int) -> str:
@@ -331,7 +469,7 @@ def find_window_by_title(part: str) -> int | None:
 
 
 def find_window_by_process(process_name: str) -> int | None:
-    found = {"hwnd": 0}
+    found: list[tuple[int, int, int]] = []
     want = process_name.lower()
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -340,13 +478,26 @@ def find_window_by_process(process_name: str) -> int | None:
             return True
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        if _process_name(pid.value) == want and get_window_title(hwnd):
-            found["hwnd"] = hwnd
-            return False
+        if _process_name(pid.value) != want:
+            return True
+        title = get_window_title(hwnd)
+        klass = get_class_name(hwnd).lower()
+        w, h = window_size(hwnd)
+        area = w * h
+        score = area
+        if "counter-strike" in title.lower():
+            score += 10_000_000
+        if klass in {"sdl_app", "valve001", "sdl_app"}:
+            score += 1_000_000
+        if title:
+            found.append((score, area, hwnd))
         return True
 
     user32.EnumWindows(callback, 0)
-    return found["hwnd"] or None
+    if not found:
+        return None
+    found.sort(reverse=True)
+    return found[0][2]
 
 
 def force_foreground(hwnd: int) -> bool:
@@ -357,6 +508,8 @@ def force_foreground(hwnd: int) -> bool:
         user32.LockSetForegroundWindow(LSFW_UNLOCK)
     except Exception:
         pass
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, SW_RESTORE)
     current = kernel32.GetCurrentThreadId()
     fg = user32.GetForegroundWindow()
     fg_tid = user32.GetWindowThreadProcessId(fg, None) if fg else 0
@@ -368,20 +521,20 @@ def force_foreground(hwnd: int) -> bool:
     if target_tid and target_tid != current:
         attached_target = bool(user32.AttachThreadInput(current, target_tid, True))
     try:
-        user32.ShowWindow(hwnd, SW_RESTORE)
-        user32.ShowWindow(hwnd, SW_SHOW)
-        user32.keybd_event(VK_MENU, 0, 0, 0)
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
         user32.BringWindowToTop(hwnd)
         user32.SetForegroundWindow(hwnd)
         user32.SetActiveWindow(hwnd)
-        user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+        user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
     finally:
         if attached_target:
             user32.AttachThreadInput(current, target_tid, False)
         if attached_fg:
             user32.AttachThreadInput(current, fg_tid, False)
     time.sleep(0.12)
-    return user32.GetForegroundWindow() == hwnd
+    ok = user32.GetForegroundWindow() == hwnd
+    _log(f"фокус CS2: {'ок' if ok else 'не удалось'} → {describe_hwnd(user32.GetForegroundWindow())}")
+    return ok
 
 
 def focus_window(hwnd: int) -> None:
