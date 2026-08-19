@@ -11,3 +11,4 @@ class Donation:
     message: str = ""
     source: str = "manual"
     donation_id: str = ""
+    is_test: bool = False

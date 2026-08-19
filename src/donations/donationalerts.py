@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from typing import Callable
 from urllib.parse import urlencode
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -13,6 +14,94 @@ import websockets
 
 from src.donations.trula import extract_token
 from src.donations.models import Donation
+
+
+def _parse_amount(value) -> float:
+    if value is None or value is False:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().replace(" ", "").replace("\xa0", "").replace(",", ".")
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def _truthy(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
+
+
+def _unwrap_payload(args) -> dict | list | None:
+    if not args:
+        return None
+    data = args[0] if len(args) == 1 else next((item for item in args if item not in (None, "")), args[0])
+    if isinstance(data, (bytes, bytearray)):
+        data = data.decode("utf-8", "ignore")
+    if isinstance(data, str):
+        text = data.strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    return data
+
+
+def _iter_donation_dicts(payload) -> list[dict]:
+    if payload is None:
+        return []
+    if isinstance(payload, list):
+        result = []
+        for item in payload:
+            result.extend(_iter_donation_dicts(item))
+        return result
+    if not isinstance(payload, dict):
+        return []
+    nested = payload.get("donation") or payload.get("donate") or payload.get("alert")
+    if isinstance(nested, dict) and ("amount" in nested or "amount_main" in nested or "amount_formatted" in nested):
+        return [nested]
+    if "data" in payload and payload["data"] is not payload:
+        inner = _iter_donation_dicts(payload["data"])
+        if inner:
+            return inner
+    if any(key in payload for key in ("amount", "amount_main", "amount_formatted", "username", "_is_test_alert")):
+        return [payload]
+    return []
+
+
+def donation_from_payload(payload: dict, source: str = "donationalerts") -> Donation | None:
+    amount = _parse_amount(payload.get("amount_main"))
+    if amount <= 0:
+        amount = _parse_amount(payload.get("amount"))
+    if amount <= 0:
+        amount = _parse_amount(payload.get("amount_formatted") or payload.get("sum"))
+    currency = str(payload.get("currency") or payload.get("currency_code") or "RUB").upper().replace("RUR", "RUB")
+    if currency in {"", "₽", "РУБ", "RUBLES"}:
+        currency = "RUB"
+    username = str(payload.get("username") or payload.get("name") or payload.get("user_name") or "Аноним")
+    message = str(payload.get("message") or payload.get("comment") or "")
+    donation_id = str(payload.get("id") or payload.get("donation_id") or payload.get("alert_id") or "").strip()
+    is_test = _truthy(payload.get("_is_test_alert") or payload.get("is_test") or payload.get("test"))
+    alert_type = str(payload.get("alert_type") or "1")
+    if alert_type not in {"", "1", "donation", "donate"} and amount <= 0:
+        return None
+    if amount <= 0 and not is_test:
+        return None
+    return Donation(
+        username=username,
+        amount=amount,
+        currency=currency,
+        message=message,
+        source=source + ("-test" if is_test else ""),
+        donation_id=donation_id,
+        is_test=is_test,
+    )
 
 
 DA_API = "https://www.donationalerts.com/api/v1"
@@ -32,6 +121,7 @@ class DonationAlertsClient:
         self.widget_token = ""
         self.mode = "websocket"
         self._seen: set[str] = set()
+        self._last_test: dict[str, float] = {}
         self._sio = None
 
     def start(self, access_token: str = "", mode: str = "websocket", widget_token: str = "") -> None:
@@ -55,6 +145,37 @@ class DonationAlertsClient:
                 pass
             self._sio = None
 
+    def _emit_donation(self, payload: dict, source: str = "donationalerts") -> None:
+        item = donation_from_payload(payload, source)
+        if item is None:
+            preview = str({k: payload.get(k) for k in list(payload)[:8]})[:240]
+            self.on_status(f"DonationAlerts: событие без суммы, пропуск ({preview})")
+            return
+        if item.is_test:
+            stamp = f"test:{item.amount}:{item.username}:{item.message}:{item.donation_id}"
+            now = time.monotonic()
+            last = self._last_test.get(stamp, 0)
+            if now - last < 1.5:
+                return
+            self._last_test[stamp] = now
+        elif item.donation_id:
+            if item.donation_id in self._seen:
+                return
+            self._seen.add(item.donation_id)
+            if len(self._seen) > 4000:
+                self._seen = set(list(self._seen)[-2000:])
+        self.on_donation(item)
+
+    def _accept_socket_args(self, event: str, args) -> None:
+        payload = _unwrap_payload(args)
+        found = False
+        for row in _iter_donation_dicts(payload):
+            found = True
+            self._emit_donation(row, "donationalerts")
+        if not found and event not in {"update-alert_widget", "update-widget", "reload"}:
+            preview = str(payload)[:220]
+            self.on_status(f"DonationAlerts событие «{event}»: {preview}")
+
     def _run(self) -> None:
         try:
             if self.widget_token:
@@ -65,8 +186,6 @@ class DonationAlertsClient:
             self.on_status(f"DonationAlerts ошибка: {exc}")
 
     def _run_widget_socket(self) -> None:
-        import time
-
         try:
             import socketio
         except ImportError:
@@ -75,31 +194,52 @@ class DonationAlertsClient:
         sio = socketio.Client(reconnection=True, reconnection_delay=3, reconnection_delay_max=15)
         self._sio = sio
 
+        def subscribe() -> None:
+            for kind in ("alert_widget", "minor"):
+                sio.emit("add-user", {"token": self.widget_token, "type": kind})
+            self.on_status("DonationAlerts: виджет подключен, жду донаты и тестовые алерты")
+
         @sio.event
         def connect() -> None:
-            sio.emit("add-user", {"token": self.widget_token, "type": "alert_widget"})
-            self.on_status("DonationAlerts: виджет подключен, жду донаты")
+            subscribe()
+
+        @sio.event
+        def reconnect() -> None:
+            subscribe()
+
+        @sio.event
+        def connect_error(data) -> None:
+            self.on_status(f"DonationAlerts: ошибка сокета {data}")
 
         @sio.on("donation")
-        def donation(data) -> None:
-            payload = json.loads(data) if isinstance(data, str) else data
-            if not isinstance(payload, dict):
+        def donation(*args) -> None:
+            try:
+                self._accept_socket_args("donation", args)
+            except Exception as exc:
+                self.on_status(f"DonationAlerts donation: {exc}")
+
+        @sio.on("alert")
+        def alert(*args) -> None:
+            try:
+                self._accept_socket_args("alert", args)
+            except Exception as exc:
+                self.on_status(f"DonationAlerts alert: {exc}")
+
+        @sio.on("donate")
+        def donate(*args) -> None:
+            try:
+                self._accept_socket_args("donate", args)
+            except Exception as exc:
+                self.on_status(f"DonationAlerts donate: {exc}")
+
+        @sio.on("*")
+        def any_event(event, *args) -> None:
+            if event in {"donation", "alert", "donate", "connect", "disconnect", "reconnect", "connect_error"}:
                 return
-            donation_id = str(payload.get("id") or "")
-            if donation_id:
-                if donation_id in self._seen:
-                    return
-                self._seen.add(donation_id)
-            self.on_donation(
-                Donation(
-                    username=str(payload.get("username") or "Аноним"),
-                    amount=float(payload.get("amount") or payload.get("amount_main") or 0),
-                    currency=str(payload.get("currency") or "RUB"),
-                    message=str(payload.get("message") or ""),
-                    source="donationalerts",
-                    donation_id=donation_id,
-                )
-            )
+            try:
+                self._accept_socket_args(str(event), args)
+            except Exception as exc:
+                self.on_status(f"DonationAlerts: {event}: {exc}")
 
         hosts = [
             "wss://socket.donationalerts.ru:443",
@@ -180,21 +320,10 @@ class DonationAlertsClient:
             return
         data = payload.get("result", {}).get("data", {})
         donation = data.get("data") or data.get("donation") or data
-        if not isinstance(donation, dict) or "amount" not in donation:
-            return
-        item = Donation(
-            username=str(donation.get("username") or "Аноним"),
-            amount=float(donation.get("amount") or 0),
-            currency=str(donation.get("currency") or "RUB"),
-            message=str(donation.get("message") or ""),
-            source="donationalerts",
-            donation_id=str(donation.get("id") or ""),
-        )
-        if item.donation_id:
-            if item.donation_id in self._seen:
-                return
-            self._seen.add(item.donation_id)
-        self.on_donation(item)
+        if isinstance(donation, dict) and any(
+            key in donation for key in ("amount", "amount_main", "amount_formatted", "_is_test_alert")
+        ):
+            self._emit_donation(donation, "donationalerts")
 
     async def _poll_loop(self) -> None:
         headers = {"Authorization": f"Bearer {self.access_token}"}
@@ -209,20 +338,11 @@ class DonationAlertsClient:
                         donation_id = str(row.get("id") or "")
                         if donation_id and donation_id in self._seen:
                             continue
-                        if donation_id:
-                            self._seen.add(donation_id)
                         if bootstrap:
+                            if donation_id:
+                                self._seen.add(donation_id)
                             continue
-                        self.on_donation(
-                            Donation(
-                                username=str(row.get("username") or "Аноним"),
-                                amount=float(row.get("amount") or 0),
-                                currency=str(row.get("currency") or "RUB"),
-                                message=str(row.get("message") or ""),
-                                source="donationalerts-poll",
-                                donation_id=donation_id,
-                            )
-                        )
+                        self._emit_donation(row, "donationalerts-poll")
                     bootstrap = False
                 except Exception as exc:
                     self.on_status(f"DonationAlerts опрос: {exc}")

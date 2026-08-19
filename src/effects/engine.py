@@ -17,7 +17,7 @@ from src.effects.cs2 import (
     nade_and_crouch,
 )
 from src.effects.flash import FlashController
-from src.effects.input_win import InputGuard
+from src.effects.input_win import InputGuard, foreground_title
 from src.effects.takeover import TakeoverController
 
 
@@ -43,6 +43,7 @@ class EffectEngine:
         self._cooldowns: dict[str, float] = {}
         self._global_ready_at = 0.0
         self._stop = False
+        self._generation = 0
         self._worker = threading.Thread(target=self._loop, name="effects", daemon=True)
         self.guard.on_kill = self.emergency_stop
         self.guard.on_panic = self.panic
@@ -65,6 +66,7 @@ class EffectEngine:
         self.log("Паника: все эффекты выключены. Включи обратно в приложении.")
 
     def emergency_stop(self) -> None:
+        self._generation += 1
         self._clear_queue()
         self.flash.cancel()
         self.takeover.cancel()
@@ -81,9 +83,9 @@ class EffectEngine:
             return
         effect_id = self._match_effect(cfg, donation)
         if not effect_id:
-            self.log(f"Донат {donation.amount:g} {donation.currency} от {donation.username}: нет подходящего эффекта")
             return
-        self.enqueue_effect(effect_id, donation, f"донат {donation.amount:g} {donation.currency}")
+        reason = "тест" if donation.is_test else f"донат {donation.amount:g} {donation.currency}"
+        self.enqueue_effect(effect_id, donation, reason)
 
     def enqueue_effect(self, effect_id: str, donation: Donation | None = None, reason: str = "тест") -> None:
         cfg = self.get_config()
@@ -100,11 +102,22 @@ class EffectEngine:
             return
         self._queue.put(Job(effect_id, donation, reason))
         who = f" от {donation.username}" if donation else ""
-        self.log(f"В очередь: {EFFECT_TITLES[effect_id]} ({reason}{who})")
+        delay = float(cfg["general"].get("test_delay_sec") or 0) if reason == "тест" else 0
+        if delay > 0:
+            self.log(
+                f"Тест «{EFFECT_TITLES[effect_id]}»: сейчас переключись в CS2. "
+                f"Сработает через {delay:.0f} сек."
+            )
+        else:
+            self.log(f"В очередь: {EFFECT_TITLES[effect_id]} ({reason}{who})")
 
     def _match_effect(self, cfg: dict[str, Any], donation: Donation) -> str | None:
-        wanted = str(cfg["general"].get("currency") or "").upper()
-        if wanted and donation.currency.upper() != wanted:
+        wanted = str(cfg["general"].get("currency") or "").upper().replace("RUR", "RUB")
+        got = (donation.currency or "RUB").upper().replace("RUR", "RUB")
+        if got in {"", "₽", "РУБ"}:
+            got = "RUB"
+        if wanted and got and wanted != got:
+            self.log(f"Донат пропущен: валюта {donation.currency}, в настройках {wanted}")
             return None
         mode = cfg["general"]["amount_mode"]
         matches: list[tuple[float, str]] = []
@@ -113,11 +126,20 @@ class EffectEngine:
             if not effect.get("enabled"):
                 continue
             amount = float(effect["amount"])
-            if mode == "exact" and abs(donation.amount - amount) < 0.009:
+            if mode == "exact" and abs(donation.amount - amount) < 0.05:
                 matches.append((amount, effect_id))
             elif mode == "threshold" and donation.amount + 1e-9 >= amount:
                 matches.append((amount, effect_id))
         if not matches:
+            amounts = [
+                f"{float(get_effect(cfg, eid)['amount']):g}"
+                for eid in EFFECT_ORDER
+                if get_effect(cfg, eid).get("enabled")
+            ]
+            self.log(
+                f"Донат {donation.amount:g} {donation.currency} от {donation.username}: "
+                f"нет эффекта на эту сумму (сейчас {', '.join(amounts) or 'нет включённых'})"
+            )
             return None
         matches.sort(key=lambda item: item[0], reverse=True)
         return matches[0][1]
@@ -137,34 +159,80 @@ class EffectEngine:
                 self.busy = False
                 self.current_effect = ""
 
+    def _wait_interruptible(self, seconds: float, generation: int) -> bool:
+        deadline = time.time() + max(0.0, seconds)
+        while time.time() < deadline:
+            if self._stop or self._generation != generation:
+                return False
+            remaining = deadline - time.time()
+            time.sleep(min(0.1, remaining))
+        return not (self._stop or self._generation != generation)
+
     def _run_job(self, job: Job) -> None:
         cfg = self.get_config()
         self.guard.kill_switch = cfg["general"]["kill_switch"]
         self.guard.panic_hotkey = cfg["general"]["panic_hotkey"]
         effect = get_effect(cfg, job.effect_id)
+        is_test = job.reason == "тест"
+        generation = self._generation
         now = time.time()
-        if now < self._global_ready_at:
+        if not is_test and now < self._global_ready_at:
             wait = self._global_ready_at - now
             self.log(f"{EFFECT_TITLES[job.effect_id]} ждёт глобальный кулдаун {wait:.1f}с")
             return
         ready_at = self._cooldowns.get(job.effect_id, 0)
-        if now < ready_at:
+        if not is_test and now < ready_at:
             self.log(f"{EFFECT_TITLES[job.effect_id]} на кулдауне ещё {ready_at - now:.1f}с")
             return
+
+        needs_game = job.effect_id not in {"flash", "kill_cs2", "minecraft_takeover"}
+        delay = float(cfg["general"].get("test_delay_sec") or 0) if is_test else 0
+        if delay <= 0 and needs_game and not is_cs2_focused(cfg["cs2"]["window_title"]):
+            delay = float(cfg["general"].get("test_delay_sec") or 0)
+            if delay > 0:
+                self.log(
+                    f"{EFFECT_TITLES[job.effect_id]}: CS2 не в фокусе. "
+                    f"Переключись в игру, старт через {delay:.0f} сек."
+                )
+        if delay > 0:
+            self.busy = True
+            self.current_effect = job.effect_id
+            whole = int(delay)
+            for left in range(whole, 0, -1):
+                self.log(f"Переключись в CS2, старт через {left}...")
+                if not self._wait_interruptible(1.0, generation):
+                    self.log("Эффект отменён")
+                    return
+            leftover = delay - whole
+            if leftover > 0 and not self._wait_interruptible(leftover, generation):
+                self.log("Эффект отменён")
+                return
+            if self._stop or self._generation != generation:
+                self.log("Эффект отменён")
+                return
+
         if job.effect_id != "minecraft_takeover":
             if cfg["general"]["require_cs2_running"] and not is_cs2_running(cfg["cs2"]["process_name"]):
                 self.log("CS2 не запущен — эффект пропущен")
                 return
-            if cfg["general"]["require_cs2_focused"] and not is_cs2_focused(cfg["cs2"]["window_title"]):
+            if (not is_test) and delay <= 0 and cfg["general"]["require_cs2_focused"] and not is_cs2_focused(cfg["cs2"]["window_title"]):
                 self.log("CS2 не в фокусе — эффект пропущен")
                 return
 
         self.busy = True
         self.current_effect = job.effect_id
-        self.log(f"Старт: {EFFECT_TITLES[job.effect_id]}")
+        active = foreground_title() or "(нет)"
+        if is_test and job.effect_id not in {"flash", "kill_cs2", "minecraft_takeover"}:
+            if not is_cs2_focused(cfg["cs2"]["window_title"]):
+                self.log(
+                    f"CS2 не в фокусе (сейчас «{active}»). "
+                    "Клавиши уйдут не в игру — нажимай Тест и сразу Alt+Tab в CS2."
+                )
+        self.log(f"Старт: {EFFECT_TITLES[job.effect_id]} → окно «{active}»")
         self._dispatch(job.effect_id, cfg)
-        self._cooldowns[job.effect_id] = time.time() + float(effect.get("cooldown_sec") or 0)
-        self._global_ready_at = time.time() + float(cfg["general"].get("global_cooldown_sec") or 0)
+        if not is_test:
+            self._cooldowns[job.effect_id] = time.time() + float(effect.get("cooldown_sec") or 0)
+            self._global_ready_at = time.time() + float(cfg["general"].get("global_cooldown_sec") or 0)
         self.log(f"Готово: {EFFECT_TITLES[job.effect_id]}")
 
     def _dispatch(self, effect_id: str, cfg: dict[str, Any]) -> None:

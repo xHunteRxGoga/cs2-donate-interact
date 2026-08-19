@@ -39,21 +39,18 @@ def find_cs2_hwnd(cfg: dict[str, Any]) -> int | None:
     return find_window_by_process(cfg["cs2"]["process_name"]) or find_window_by_title(cfg["cs2"]["window_title"])
 
 
-def ensure_cs2_ready(cfg: dict[str, Any]) -> None:
+def prepare_cs2_input(cfg: dict[str, Any]) -> None:
     hwnd = find_cs2_hwnd(cfg)
     if not hwnd:
-        raise RuntimeError("Окно CS2 не найдено. Нужен режим «Во весь экран в окне», не exclusive fullscreen.")
+        raise RuntimeError("Окно CS2 не найдено. Включи игру в режиме «Во весь экран в окне».")
     if user32.GetForegroundWindow() == hwnd:
         return
-    if not force_foreground(hwnd):
-        raise RuntimeError(
-            "CS2 не удалось вывести на передний план, поэтому клавиши не попали в игру. "
-            "Кликни по CS2 и повтори тест, либо запускай эффекты, пока игра уже в фокусе."
-        )
+    force_foreground(hwnd)
+    time.sleep(0.12)
 
 
 def drop_weapon(cfg: dict[str, Any]) -> None:
-    ensure_cs2_ready(cfg)
+    prepare_cs2_input(cfg)
     tap_key(cfg["cs2"]["keys"]["drop"], 0.09)
     time.sleep(0.05)
     tap_key(cfg["cs2"]["keys"]["drop"], 0.09)
@@ -61,7 +58,7 @@ def drop_weapon(cfg: dict[str, Any]) -> None:
 
 def mouse_jerk(cfg: dict[str, Any]) -> None:
     effect = cfg["effects"]["mouse_jerk"]
-    ensure_cs2_ready(cfg)
+    prepare_cs2_input(cfg)
     intensity = int(effect.get("intensity", 900))
     jerks = int(effect.get("jerks", 7))
     interval = int(effect.get("interval_ms", 40)) / 1000
@@ -80,7 +77,7 @@ def mouse_jerk(cfg: dict[str, Any]) -> None:
 def nade_and_crouch(cfg: dict[str, Any]) -> None:
     keys = cfg["cs2"]["keys"]
     effect = cfg["effects"]["nade_and_crouch"]
-    ensure_cs2_ready(cfg)
+    prepare_cs2_input(cfg)
     tap_key(keys["grenade"], 0.1)
     time.sleep(0.18)
     look = int(effect.get("look_down_pixels", 3200))

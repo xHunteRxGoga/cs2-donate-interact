@@ -287,7 +287,7 @@ class App(tk.Tk):
     def _build_effects(self) -> None:
         ttk.Label(
             self.tab_effects,
-            text="Сумма доната запускает один эффект. Кнопка «Тест» срабатывает сразу, без DonationAlerts.",
+            text="Сумма доната запускает один эффект. «Тест»: 3 сек на переход в CS2, потом эффект.",
             style="Muted.TLabel",
         ).pack(anchor="w", pady=(8, 10))
         self.effect_vars: dict[str, dict[str, Any]] = {}
@@ -374,20 +374,28 @@ class App(tk.Tk):
         self.global_cd.insert(0, str(g["global_cooldown_sec"]))
         self.global_cd.grid(row=2, column=2, sticky="w")
 
-        ttk.Label(grid, text="Макс. очередь").grid(row=3, column=1, sticky="e", padx=8)
+        ttk.Label(grid, text="Пауза теста, сек").grid(row=3, column=1, sticky="e", padx=8)
+        self.test_delay = self._entry(grid, 8)
+        self.test_delay.insert(0, str(g.get("test_delay_sec", 3)))
+        self.test_delay.grid(row=3, column=2, sticky="w")
+        ttk.Label(grid, text="после «Тест» или фейк-алерта DA успей перейти в CS2").grid(
+            row=3, column=3, sticky="w", padx=8
+        )
+
+        ttk.Label(grid, text="Макс. очередь").grid(row=4, column=1, sticky="e", padx=8)
         self.max_queue = self._entry(grid, 8)
         self.max_queue.insert(0, str(g["max_queue"]))
-        self.max_queue.grid(row=3, column=2, sticky="w")
+        self.max_queue.grid(row=4, column=2, sticky="w")
 
-        ttk.Label(grid, text="Аварийный стоп").grid(row=4, column=1, sticky="e", padx=8)
+        ttk.Label(grid, text="Аварийный стоп").grid(row=5, column=1, sticky="e", padx=8)
         self.kill_switch = self._entry(grid, 14)
         self.kill_switch.insert(0, g["kill_switch"])
-        self.kill_switch.grid(row=4, column=2, sticky="w")
+        self.kill_switch.grid(row=5, column=2, sticky="w")
 
-        ttk.Label(grid, text="Паника").grid(row=5, column=1, sticky="e", padx=8)
+        ttk.Label(grid, text="Паника").grid(row=6, column=1, sticky="e", padx=8)
         self.panic_hotkey = self._entry(grid, 14)
         self.panic_hotkey.insert(0, g["panic_hotkey"])
-        self.panic_hotkey.grid(row=5, column=2, sticky="w")
+        self.panic_hotkey.grid(row=6, column=2, sticky="w")
 
         ttk.Label(
             self.tab_general,
@@ -499,7 +507,7 @@ class App(tk.Tk):
         self.da_mode.set(da.get("mode", "websocket"))
         self.da_mode.grid(row=10, column=1, sticky="w")
         ttk.Button(box, text="Войти через DonationAlerts OAuth", command=self._oauth).grid(row=11, column=1, sticky="w", pady=8)
-        ttk.Label(box, text="Для тестов без доната: кнопка «Тест» на вкладке Эффекты.", style="Muted.TLabel").grid(row=12, column=0, columnspan=3, sticky="w", pady=8)
+        ttk.Label(box, text="Тестовый алерт из кабинета тоже ловится. Сумма должна совпасть с эффектом (100, 200…). После теста — 3 сек, успей в CS2.", style="Muted.TLabel").grid(row=12, column=0, columnspan=3, sticky="w", pady=8)
         box.columnconfigure(1, weight=1)
 
     def _build_dp_fields(self, parent: tk.Widget) -> None:
@@ -605,6 +613,7 @@ class App(tk.Tk):
         self.cfg["general"]["amount_mode"] = self.amount_mode.get()
         self.cfg["general"]["queue_mode"] = self.queue_mode.get()
         self.cfg["general"]["global_cooldown_sec"] = float(self.global_cd.get() or 0)
+        self.cfg["general"]["test_delay_sec"] = float(self.test_delay.get() or 0)
         self.cfg["general"]["max_queue"] = int(self.max_queue.get() or 5)
         self.cfg["general"]["kill_switch"] = self.kill_switch.get().strip() or "alt+5"
         self.cfg["general"]["panic_hotkey"] = self.panic_hotkey.get().strip() or "ctrl+alt+5"
@@ -721,7 +730,8 @@ class App(tk.Tk):
             self.webhook.start(self.cfg["webhook"]["host"], int(self.cfg["webhook"]["port"]))
 
     def _on_donation(self, donation: Donation) -> None:
-        self.log(f"Донат: {donation.username} — {donation.amount:g} {donation.currency} ({donation.source})")
+        kind = "тест-алерт" if donation.is_test else "донат"
+        self.log(f"{kind}: {donation.username} — {donation.amount:g} {donation.currency} ({donation.source})")
         self.engine.enqueue_donation(donation)
 
     def _panic(self) -> None:

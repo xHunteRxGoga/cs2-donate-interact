@@ -20,6 +20,7 @@ DEFAULTS: dict[str, Any] = {
         "queue_mode": "queue",
         "max_queue": 5,
         "global_cooldown_sec": 8,
+        "test_delay_sec": 3,
         "amount_mode": "exact",
         "currency": "RUB",
         "kill_switch": "alt+5",
