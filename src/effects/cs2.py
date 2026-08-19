@@ -117,9 +117,6 @@ def nade_and_crouch(cfg: dict[str, Any]) -> None:
     select = keys["grenade"]
     crouch = keys["crouch"]
     _log(f"граната: слот={select!r} бросок={throw!r} присед={crouch!r}")
-    # CS2 долго достаёт гранату — 0.18с мало, HE ещё не в руках.
-    tap_key(select, 0.12)
-    time.sleep(0.22)
     tap_key(select, 0.12)
     time.sleep(float(effect.get("draw_sec", 0.65)))
     key_down(crouch)
