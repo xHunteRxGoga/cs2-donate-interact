@@ -16,15 +16,19 @@ from src.effects.cs2 import is_cs2_running
 from src.effects.engine import EffectEngine
 
 
-BG = "#101218"
-PANEL = "#171b24"
-CARD = "#1e2430"
-FG = "#e8eaed"
-MUTED = "#8b93a7"
-ACCENT = "#f0b429"
-OK = "#3dd68c"
-BAD = "#ff6b6b"
-ENTRY_BG = "#0c0f14"
+BG = "#120815"
+PANEL = "#1c1228"
+CARD = "#27183a"
+FG = "#f4eefe"
+MUTED = "#b7a6cc"
+ACCENT = "#c4b5fd"
+ACCENT_DARK = "#7c5cbf"
+BUTTON = "#3a2458"
+BUTTON_HOVER = "#4e3174"
+OK = "#7ee0b8"
+BAD = "#ff7b9c"
+ENTRY_BG = "#0e0816"
+HIGHLIGHT = "#8b6cc9"
 
 
 class App(tk.Tk):
@@ -69,22 +73,85 @@ class App(tk.Tk):
         style.configure("Card.TFrame", background=PANEL)
         style.configure("TLabel", background=BG, foreground=FG, font=("Segoe UI", 10))
         style.configure("Muted.TLabel", background=BG, foreground=MUTED, font=("Segoe UI", 9))
-        style.configure("Title.TLabel", background=BG, foreground=FG, font=("Segoe UI Semibold", 16))
+        style.configure("Title.TLabel", background=BG, foreground=ACCENT, font=("Segoe UI Semibold", 18))
         style.configure("Card.TLabel", background=PANEL, foreground=FG, font=("Segoe UI", 10))
         style.configure("CardMuted.TLabel", background=PANEL, foreground=MUTED, font=("Segoe UI", 9))
-        style.configure("TCheckbutton", background=PANEL, foreground=FG, font=("Segoe UI", 10))
+        style.configure(
+            "TCheckbutton",
+            background=PANEL,
+            foreground=FG,
+            font=("Segoe UI", 10),
+            indicatorcolor=ENTRY_BG,
+            indicatorrelief="flat",
+        )
+        style.map(
+            "TCheckbutton",
+            background=[("active", CARD)],
+            foreground=[("active", ACCENT)],
+            indicatorcolor=[("selected", ACCENT_DARK), ("active", HIGHLIGHT)],
+        )
         style.configure("TNotebook", background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab", background=CARD, foreground=FG, padding=(14, 8), font=("Segoe UI", 10))
-        style.map("TNotebook.Tab", background=[("selected", ACCENT)], foreground=[("selected", "#1a1203")])
-        style.configure("Accent.TButton", font=("Segoe UI Semibold", 10), padding=8)
-        style.configure("TButton", font=("Segoe UI", 9), padding=6)
-        style.configure("TEntry", fieldbackground=ENTRY_BG, foreground=FG)
-        style.configure("TCombobox", fieldbackground=ENTRY_BG, foreground=FG)
+        style.configure(
+            "TNotebook.Tab",
+            background=CARD,
+            foreground=MUTED,
+            padding=(16, 9),
+            font=("Segoe UI", 10),
+            borderwidth=0,
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", ACCENT_DARK), ("active", BUTTON_HOVER)],
+            foreground=[("selected", "#f8f4ff"), ("active", FG)],
+        )
+        style.configure(
+            "TButton",
+            font=("Segoe UI", 9),
+            padding=8,
+            background=BUTTON,
+            foreground=FG,
+            borderwidth=0,
+            focusthickness=0,
+            relief="flat",
+        )
+        style.map(
+            "TButton",
+            background=[("active", BUTTON_HOVER), ("pressed", ACCENT_DARK)],
+            foreground=[("active", "#ffffff")],
+        )
+        style.configure(
+            "Accent.TButton",
+            font=("Segoe UI Semibold", 10),
+            padding=8,
+            background=ACCENT_DARK,
+            foreground="#f8f4ff",
+        )
+        style.map("Accent.TButton", background=[("active", HIGHLIGHT), ("pressed", BUTTON)])
+        style.configure("TEntry", fieldbackground=ENTRY_BG, foreground=FG, insertcolor=FG)
+        style.configure(
+            "TCombobox",
+            fieldbackground=ENTRY_BG,
+            background=CARD,
+            foreground=FG,
+            arrowcolor=ACCENT,
+            bordercolor=HIGHLIGHT,
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", ENTRY_BG)],
+            foreground=[("readonly", FG)],
+            background=[("active", CARD)],
+        )
+        self.option_add("*TCombobox*Listbox.background", ENTRY_BG)
+        self.option_add("*TCombobox*Listbox.foreground", FG)
+        self.option_add("*TCombobox*Listbox.selectBackground", ACCENT_DARK)
+        self.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
 
     def _build(self) -> None:
         head = ttk.Frame(self)
         head.pack(fill="x", padx=18, pady=(16, 8))
         ttk.Label(head, text="CS2 Donate Interact", style="Title.TLabel").pack(side="left")
+        ttk.Label(head, text="  донат-интерактив", style="Muted.TLabel").pack(side="left", pady=(6, 0))
         self.status_da = ttk.Label(head, text="DA: нет", style="Muted.TLabel")
         self.status_dp = ttk.Label(head, text="DP: нет", style="Muted.TLabel")
         self.status_trula = ttk.Label(head, text="Trula: нет", style="Muted.TLabel")
@@ -116,7 +183,7 @@ class App(tk.Tk):
 
         bar = ttk.Frame(self)
         bar.pack(fill="x", padx=18, pady=(0, 14))
-        ttk.Button(bar, text="Сохранить настройки", command=self._save).pack(side="left")
+        ttk.Button(bar, text="Сохранить настройки", style="Accent.TButton", command=self._save).pack(side="left")
         ttk.Button(bar, text="Аварийный стоп (Alt+5)", command=self.engine.emergency_stop).pack(side="left", padx=8)
         ttk.Button(bar, text="Паника: выключить всё", command=self._panic).pack(side="left")
         ttk.Button(bar, text="Включить эффекты", command=self._resume).pack(side="left", padx=8)
@@ -132,10 +199,11 @@ class App(tk.Tk):
             width=width,
             bg=ENTRY_BG,
             fg=FG,
-            insertbackground=FG,
+            insertbackground=ACCENT,
             relief="flat",
             highlightthickness=1,
-            highlightbackground="#2a3140",
+            highlightbackground=HIGHLIGHT,
+            highlightcolor=ACCENT,
             exportselection=False,
         )
         self._bind_clipboard(entry)
@@ -516,11 +584,15 @@ class App(tk.Tk):
         self.log_box = tk.Text(
             self.tab_log,
             bg=ENTRY_BG,
-            fg=FG,
-            insertbackground=FG,
+            fg="#e4d7f5",
+            insertbackground=ACCENT,
             relief="flat",
             state="disabled",
             font=("Consolas", 10),
+            highlightthickness=1,
+            highlightbackground=HIGHLIGHT,
+            selectbackground=ACCENT_DARK,
+            selectforeground="#ffffff",
         )
         self.log_box.pack(fill="both", expand=True, pady=8)
         self.log("Приложение запущено. Сначала нажми «Тест» на флешке — так проще проверить, что оверлей виден поверх CS2.")
