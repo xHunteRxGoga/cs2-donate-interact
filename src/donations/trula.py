@@ -1,30 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import threading
-import time
 from typing import Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from src.donations.centrifuge_json import CentrifugeJSON
 from src.donations.models import Donation
-
-
-def extract_token(value: str) -> str:
-    raw = (value or "").strip()
-    if not raw:
-        return ""
-    if "://" in raw or "token=" in raw:
-        query = parse_qs(urlparse(raw).query)
-        for key in ("token", "api_token", "access_token", "key"):
-            if query.get(key):
-                return query[key][0].strip()
-        path = urlparse(raw).path.rstrip("/").split("/")
-        if path and path[-1] and path[-1] not in {"widget", "widgets", "alert", "alerts", "overlay"}:
-            return path[-1]
-    return raw
+from src.donations.parse import donation_from_payload, extract_token, iter_donation_dicts, unwrap_payload
+from src.donations.socketio_raw import RawSocketIO
 
 
 class TrulaClient:
@@ -32,153 +20,238 @@ class TrulaClient:
         self.on_donation = on_donation
         self.on_status = on_status
         self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._sio = None
         self._seen: set[str] = set()
         self.widget = ""
+        self.connected = False
 
     def start(self, widget: str) -> None:
         self.stop()
         self.widget = (widget or "").strip()
+        self.connected = False
         if not self.widget:
-            self.on_status("Trula: нет ссылки виджета или токена")
+            self.on_status("Trula: нет ссылки виджета. Нажми «Привязать аккаунт».")
             return
+        if "/dp/" in self.widget and "widget" not in self.widget.lower() and "overlay" not in self.widget.lower():
+            self.on_status("Trula: это страница доната /dp/..., а нужна OBS-ссылка виджета алертов.")
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="trula", daemon=True)
-        self._thread.start()
+        threading.Thread(target=self._run, name="trula", daemon=True).start()
 
     def stop(self) -> None:
         self._stop.set()
-        if self._sio is not None:
-            try:
-                self._sio.disconnect()
-            except Exception:
-                pass
-            self._sio = None
+        self.connected = False
 
     def _run(self) -> None:
-        token = extract_token(self.widget)
-        page_url = self.widget if self.widget.startswith("http") else ""
         try:
-            if page_url:
-                self._inspect_widget_page(page_url)
-            self._listen_socket(token)
+            asyncio.run(self._main())
         except Exception as exc:
             self.on_status(f"Trula ошибка: {exc}")
 
-    def _inspect_widget_page(self, url: str) -> None:
+    async def _main(self) -> None:
+        page_url = self.widget if self.widget.startswith("http") else ""
+        token = extract_token(self.widget)
+        discovered = await self._inspect(page_url, token)
+        tasks = [
+            asyncio.create_task(self._listen_sockets(discovered, token)),
+            asyncio.create_task(self._poll_apis(discovered, token)),
+        ]
+        await asyncio.gather(*tasks)
+
+    async def _inspect(self, page_url: str, token: str) -> dict:
+        info: dict = {"sockets": [], "apis": [], "scripts": [], "html": ""}
+        if not page_url:
+            info["apis"].extend(_guess_api_urls(token))
+            info["sockets"].extend(
+                [
+                    "https://trula.io",
+                    "https://trula.io/socket.io",
+                    "wss://trula.io",
+                ]
+            )
+            return info
         try:
-            html = httpx.get(url, timeout=20, follow_redirects=True).text
+            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+                resp = await client.get(page_url)
+                html = resp.text
+                info["html"] = html
+                origin = f"{urlparse(str(resp.url)).scheme}://{urlparse(str(resp.url)).netloc}"
+                info["sockets"].extend(re.findall(r"wss?://[a-zA-Z0-9._:/-]+", html))
+                info["apis"].extend(_urls_from_text(html, origin, token))
+                scripts = re.findall(r'src=["\']([^"\']+\.js[^"\']*)["\']', html)
+                for src in scripts[:12]:
+                    abs_url = urljoin(str(resp.url), src)
+                    info["scripts"].append(abs_url)
+                    try:
+                        js = (await client.get(abs_url)).text
+                    except Exception:
+                        continue
+                    info["sockets"].extend(re.findall(r"wss?://[a-zA-Z0-9._:/-]+", js))
+                    info["apis"].extend(_urls_from_text(js, origin, token))
+                    if "socket.io" in js:
+                        info["sockets"].append(origin)
+                        info["sockets"].append(origin + "/socket.io")
         except Exception as exc:
             self.on_status(f"Trula: не открылась ссылка виджета ({exc})")
-            return
-        sockets = re.findall(r"wss://[a-zA-Z0-9._:/-]+", html)
-        if sockets:
-            self.on_status(f"Trula: в виджете найден сокет {sockets[0]}")
+        info["sockets"] = list(dict.fromkeys(info["sockets"]))
+        info["apis"] = list(dict.fromkeys(info["apis"]))
+        if info["sockets"]:
+            self.on_status(f"Trula: в виджете найдены сокеты {', '.join(info['sockets'][:3])}")
+        if info["apis"]:
+            self.on_status(f"Trula: найдены API {', '.join(info['apis'][:3])}")
+        return info
 
-    def _listen_socket(self, token: str) -> None:
-        try:
-            import socketio
-        except ImportError:
-            self.on_status("Trula: установи зависимости через run.bat (нужен python-socketio)")
-            return
-        if not token:
-            self.on_status("Trula: не удалось вытащить токен из ссылки")
-            return
-
-        sio = socketio.Client(reconnection=True, reconnection_delay=3, reconnection_delay_max=15)
-        self._sio = sio
-
-        @sio.event
-        def connect() -> None:
-            for payload in (
-                {"token": token, "type": "alert_widget"},
-                {"token": token},
-                {"api_token": token},
-            ):
+    async def _listen_sockets(self, discovered: dict, token: str) -> None:
+        hosts = discovered.get("sockets") or []
+        hosts.extend(
+            [
+                "https://trula.io",
+                "wss://trula.io",
+            ]
+        )
+        hosts = list(dict.fromkeys(hosts))
+        raw = RawSocketIO(self._on_raw_event, self.on_status)
+        emits = [
+            ("add-user", {"token": token, "type": "alert_widget"}),
+            ("join", {"token": token}),
+            ("subscribe", {"token": token}),
+            ("auth", {"token": token}),
+        ]
+        centrifuge = CentrifugeJSON(self._on_publication, self.on_status)
+        while not self._stop.is_set():
+            connected = False
+            for host in hosts:
+                if self._stop.is_set():
+                    return
+                if host.startswith("ws"):
+                    try:
+                        await centrifuge.listen_v2(
+                            host if host.endswith("websocket") else host.rstrip("/") + "/connection/websocket",
+                            token=token,
+                            channel=f"notifications#{token}",
+                            stop_event=self._stop,
+                            label="Trula",
+                        )
+                        connected = True
+                        self.connected = True
+                        break
+                    except Exception:
+                        pass
                 try:
-                    sio.emit("add-user", payload)
-                    sio.emit("subscribe", payload)
-                    sio.emit("join", payload)
+                    await raw.connect_and_listen(host, emit_on_connect=emits, stop_event=self._stop, label="Trula")
+                    connected = True
+                    self.connected = True
+                    break
                 except Exception:
                     continue
-            self.on_status("Trula: сокет подключен, жду донаты")
-
-        @sio.event
-        def disconnect() -> None:
-            if not self._stop.is_set():
+            if not connected:
+                self.on_status("Trula: realtime-сокет не найден, оставляю опрос страницы/API")
+                await asyncio.sleep(12)
+            elif not self._stop.is_set():
                 self.on_status("Trula: сокет отключился, переподключаюсь")
+                await asyncio.sleep(4)
 
-        def handle(data) -> None:
-            self._emit_donation(data)
+    async def _poll_apis(self, discovered: dict, token: str) -> None:
+        urls = list(discovered.get("apis") or [])
+        urls.extend(_guess_api_urls(token))
+        if self.widget.startswith("http"):
+            urls.append(self.widget)
+        urls = list(dict.fromkeys(urls))
+        bootstrap: dict[str, set[str]] = {}
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            while not self._stop.is_set():
+                for url in urls:
+                    try:
+                        resp = await client.get(url, headers={"Accept": "application/json"})
+                        if resp.status_code >= 400:
+                            continue
+                        payload = None
+                        try:
+                            payload = resp.json()
+                        except Exception:
+                            text = resp.text
+                            match = re.search(r"(\{.*\}|\[.*\])", text, re.S)
+                            if match:
+                                try:
+                                    payload = json.loads(match.group(1)[:200000])
+                                except json.JSONDecodeError:
+                                    payload = None
+                        if payload is None:
+                            continue
+                        rows = iter_donation_dicts(payload)
+                        if not rows and isinstance(payload, dict):
+                            for key in ("items", "results", "donations", "alerts"):
+                                if isinstance(payload.get(key), list):
+                                    rows = iter_donation_dicts(payload[key])
+                                    break
+                        first = url not in bootstrap
+                        seen = bootstrap.setdefault(url, set())
+                        for row in rows:
+                            donation_id = str(row.get("id") or row.get("donation_id") or "")
+                            marker = donation_id or json.dumps(row, sort_keys=True, ensure_ascii=False)[:180]
+                            if marker in seen:
+                                continue
+                            seen.add(marker)
+                            if first:
+                                continue
+                            item = donation_from_payload(row, "trula")
+                            if item:
+                                self.connected = True
+                                self.on_donation(item)
+                        if rows:
+                            self.connected = True
+                    except Exception:
+                        continue
+                await asyncio.sleep(5)
 
-        for event_name in ("donation", "donate", "alert", "notification", "new_donation", "message"):
-            sio.on(event_name, handle)
+    def _on_raw_event(self, event: str, args) -> None:
+        self.connected = True
+        if event in {"connect", "disconnect", "ping", "pong"}:
+            return
+        payload = unwrap_payload(args)
+        found = False
+        for row in iter_donation_dicts(payload):
+            found = True
+            self._emit(row)
+        if not found:
+            self.on_status(f"Trula событие «{event}»: {str(payload)[:200]}")
 
-        @sio.on("*")
-        def catch_all(event, data=None) -> None:
-            if event in {"connect", "disconnect", "ping", "pong"}:
+    def _on_publication(self, data: dict) -> None:
+        for row in iter_donation_dicts(data):
+            self._emit(row)
+
+    def _emit(self, payload: dict) -> None:
+        item = donation_from_payload(payload, "trula")
+        if item is None:
+            return
+        if item.donation_id:
+            if item.donation_id in self._seen:
                 return
-            if data:
-                self._emit_donation(data)
+            self._seen.add(item.donation_id)
+        self.connected = True
+        self.on_donation(item)
 
-        hosts = [
-            "https://trula.io",
-            "wss://trula.io",
-            "https://widget.trula.io",
-            "https://ws.trula.io",
-        ]
-        last_error = None
-        for host in hosts:
-            if self._stop.is_set():
-                return
-            try:
-                sio.connect(host, transports=["websocket"], wait_timeout=8)
-                last_error = None
-                break
-            except Exception as exc:
-                last_error = exc
-        if last_error and not sio.connected:
-            self.on_status(
-                "Trula: не удалось подключить сокет. Проверь, что вставлена ссылка виджета алертов из кабинета Trula → Виджеты."
-            )
-            self.on_status(f"Trula подробности: {last_error}")
-            return
-        while not self._stop.is_set():
-            time.sleep(0.2)
-        try:
-            sio.disconnect()
-        except Exception:
-            pass
 
-    def _emit_donation(self, data) -> None:
-        if isinstance(data, (list, tuple)) and data:
-            data = data[0]
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except json.JSONDecodeError:
-                return
-        if not isinstance(data, dict):
-            return
-        payload = data.get("donation") or data.get("data") or data.get("vars") or data
-        if not isinstance(payload, dict):
-            return
-        amount = payload.get("amount") or payload.get("sum") or payload.get("value")
-        if amount is None:
-            return
-        donation_id = str(payload.get("id") or payload.get("donation_id") or "")
-        if donation_id and donation_id in self._seen:
-            return
-        if donation_id:
-            self._seen.add(donation_id)
-        self.on_donation(
-            Donation(
-                username=str(payload.get("username") or payload.get("name") or payload.get("nickname") or "Аноним"),
-                amount=float(amount),
-                currency=str(payload.get("currency") or "RUB"),
-                message=str(payload.get("message") or payload.get("comment") or payload.get("text") or ""),
-                source="trula",
-                donation_id=donation_id,
-            )
-        )
+def _guess_api_urls(token: str) -> list[str]:
+    if not token:
+        return []
+    return [
+        f"https://trula.io/v1/me/donate?token={token}",
+        f"https://trula.io/api/v1/donations?token={token}",
+        f"https://trula.io/api/donations?token={token}",
+        f"https://trula.io/v1/donate?token={token}",
+    ]
+
+
+def _urls_from_text(text: str, origin: str, token: str) -> list[str]:
+    found: list[str] = []
+    for raw in re.findall(r"https?://[a-zA-Z0-9._:/-]+", text):
+        low = raw.lower()
+        if any(key in low for key in ("donate", "donation", "alert", "widget", "notif", "/v1/")):
+            found.append(raw)
+    for path in re.findall(r"['\"](/[a-zA-Z0-9_\-./]{3,80})['\"]", text):
+        low = path.lower()
+        if any(key in low for key in ("donate", "donation", "alert", "widget", "/v1/", "/api")):
+            url = origin + path
+            if token and "token=" not in url:
+                url += ("&" if "?" in url else "?") + "token=" + token
+            found.append(url)
+    return found

@@ -1,15 +1,30 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import threading
 from typing import Callable
 
 import httpx
 
+from src.donations.centrifuge_json import CentrifugeJSON
 from src.donations.models import Donation
+from src.donations.parse import donation_from_payload, extract_token, iter_donation_dicts, parse_amount
 
 
 DP_API = "https://donatepay.ru/api/v1"
+DP_WIDGET = "https://widget.donatepay.ru/alert-box/widget/{}"
+DP_SOCKET_TOKEN = "https://widget.donatepay.ru/socket/token"
+DP_SOCKETS = (
+    "wss://widget.donatepay.ru/connection/websocket",
+    "wss://centrifugo.donatepay.ru/connection/websocket",
+    "wss://136.243.1.101:3002/connection/websocket",
+    "ws://136.243.1.101:3002/connection/websocket",
+)
+
+_SUCCESS = {"", "success", "1", "ok", "paid", "done", "true"}
+_DONATION_TYPES = {"", "donation", "donate", "donations"}
 
 
 class DonatePayClient:
@@ -17,33 +32,55 @@ class DonatePayClient:
         self.on_donation = on_donation
         self.on_status = on_status
         self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
         self.api_token = ""
-        self.poll_interval_sec = 20.0
+        self.widget_token = ""
+        self.poll_interval_sec = 8.0
         self.currency = "RUB"
+        self.connected = False
         self._seen: set[str] = set()
 
-    def start(self, api_token: str, poll_interval_sec: float = 20.0, currency: str = "RUB") -> None:
+    def start(
+        self,
+        api_token: str = "",
+        poll_interval_sec: float = 8.0,
+        currency: str = "RUB",
+        widget_token: str = "",
+    ) -> None:
         self.stop()
-        self.api_token = api_token.strip()
-        self.poll_interval_sec = max(15.0, float(poll_interval_sec or 20))
+        self.api_token = extract_token(api_token or "")
+        self.widget_token = extract_token(widget_token or "")
+        if "widget.donatepay" in (api_token or "").lower() or "alert-box" in (api_token or "").lower():
+            self.widget_token = self.widget_token or extract_token(api_token)
+            self.api_token = ""
+        self.poll_interval_sec = max(5.0, float(poll_interval_sec or 8))
         self.currency = currency or "RUB"
-        if not self.api_token:
-            self.on_status("DonatePay: нет API-токена")
+        self.connected = False
+        if not self.api_token and not self.widget_token:
+            self.on_status("DonatePay: нет API-ключа и токена виджета. Нажми «Привязать аккаунт».")
             return
         self._stop.clear()
         self._seen.clear()
-        self._thread = threading.Thread(target=self._run, name="donatepay", daemon=True)
-        self._thread.start()
+        threading.Thread(target=self._run, name="donatepay", daemon=True).start()
 
     def stop(self) -> None:
         self._stop.set()
+        self.connected = False
 
     def _run(self) -> None:
         try:
-            asyncio.run(self._poll_loop())
+            asyncio.run(self._main())
         except Exception as exc:
             self.on_status(f"DonatePay ошибка: {exc}")
+
+    async def _main(self) -> None:
+        tasks = []
+        if self.api_token:
+            tasks.append(asyncio.create_task(self._poll_loop()))
+        if self.widget_token:
+            tasks.append(asyncio.create_task(self._widget_loop()))
+        if not tasks:
+            return
+        await asyncio.gather(*tasks)
 
     async def _poll_loop(self) -> None:
         params = {
@@ -56,11 +93,12 @@ class DonatePayClient:
         async with httpx.AsyncClient(timeout=20) as client:
             try:
                 user = (await client.get(f"{DP_API}/user", params={"access_token": self.api_token})).json()
-                if user.get("status") != "success":
-                    self.on_status(f"DonatePay: {user.get('message') or user.get('status') or 'токен не принят'}")
-                    return
-                name = (user.get("data") or {}).get("name") or (user.get("data") or {}).get("id") or "стример"
-                self.on_status(f"DonatePay: вход как {name}, опрос раз в {self.poll_interval_sec:.0f} сек")
+                if str(user.get("status") or "").lower() not in {"success", "ok", "1"}:
+                    self.on_status(f"DonatePay API: {user.get('message') or user.get('status') or 'токен не принят'}")
+                else:
+                    name = (user.get("data") or {}).get("name") or (user.get("data") or {}).get("id") or "стример"
+                    self.on_status(f"DonatePay: вход как {name}, опрос раз в {self.poll_interval_sec:.0f} сек")
+                    self.connected = True
             except Exception as exc:
                 self.on_status(f"DonatePay: не удалось проверить токен ({exc}), пробую опрос донатов")
 
@@ -69,39 +107,161 @@ class DonatePayClient:
                     resp = await client.get(f"{DP_API}/transactions", params=params)
                     resp.raise_for_status()
                     payload = resp.json()
-                    if payload.get("status") not in (None, "success"):
+                    status = str(payload.get("status") or "").lower()
+                    if status not in {"", "success", "ok", "1"}:
                         self.on_status(f"DonatePay API: {payload.get('message') or payload.get('status')}")
-                    for row in payload.get("data") or []:
-                        self._handle_row(row, bootstrap)
+                    rows = payload.get("data") or payload.get("transactions") or []
+                    if isinstance(rows, dict):
+                        rows = rows.get("data") or []
+                    for row in rows:
+                        self._handle_row(row, bootstrap, "donatepay-poll")
                     bootstrap = False
+                    self.connected = True
                 except Exception as exc:
                     self.on_status(f"DonatePay опрос: {exc}")
                 await asyncio.sleep(self.poll_interval_sec)
 
-    def _handle_row(self, row: dict, bootstrap: bool) -> None:
-        if str(row.get("status") or "").lower() not in {"", "success"}:
+    async def _widget_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                await self._listen_widget_once()
+            except Exception as exc:
+                self.on_status(f"DonatePay виджет: {exc}")
+            if self._stop.is_set():
+                return
+            self.on_status("DonatePay виджет: переподключение через 6 сек")
+            await asyncio.sleep(6)
+
+    async def _listen_widget_once(self) -> None:
+        token = self.widget_token
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            html = (await client.get(DP_WIDGET.format(token))).text
+            user_id = _extract_user_id(html)
+            csrf = _extract_csrf(html)
+            sockets = re.findall(r"wss?://[a-zA-Z0-9._:/-]+", html)
+            auth = {}
+            if csrf:
+                resp = await client.post(DP_SOCKET_TOKEN, data={"token": token, "_token": csrf})
+                try:
+                    auth = resp.json()
+                except Exception:
+                    auth = {}
+            if not auth.get("token"):
+                resp = await client.post(DP_SOCKET_TOKEN, json={"token": token, "_token": csrf})
+                try:
+                    auth = resp.json() if not auth.get("token") else auth
+                except Exception:
+                    pass
+        if not user_id:
+            raise RuntimeError("не удалось прочитать userId из виджета — нужна ссылка из «Оповещения»")
+        socket_token = str(auth.get("token") or auth.get("socket_token") or "")
+        timestamp = str(auth.get("time") or auth.get("timestamp") or "")
+        channel = f"notifications#{user_id}"
+        hosts = list(dict.fromkeys([*sockets, *DP_SOCKETS]))
+        last_error: Exception | None = None
+        centrifuge = CentrifugeJSON(self._on_publication, self.on_status)
+        for url in hosts:
+            if self._stop.is_set():
+                return
+            try:
+                if socket_token and timestamp:
+                    await centrifuge.listen_v1(
+                        url,
+                        user=str(user_id),
+                        timestamp=timestamp,
+                        token=socket_token,
+                        channel=channel,
+                        stop_event=self._stop,
+                        label="DonatePay",
+                    )
+                    return
+                if socket_token:
+                    await centrifuge.listen_v2(
+                        url,
+                        token=socket_token,
+                        channel=channel,
+                        stop_event=self._stop,
+                        label="DonatePay",
+                    )
+                    return
+            except Exception as exc:
+                last_error = exc
+        raise RuntimeError(last_error or "нет сокета DonatePay")
+
+    def _on_publication(self, data: dict) -> None:
+        self.connected = True
+        rows = iter_donation_dicts(data)
+        if not rows and isinstance(data.get("notification"), dict):
+            rows = iter_donation_dicts(data["notification"])
+        if not rows:
+            vars_ = (data.get("notification") or {}).get("vars") if isinstance(data.get("notification"), dict) else None
+            if isinstance(vars_, dict):
+                rows = [vars_]
+        for row in rows:
+            self._handle_row(row, bootstrap=False, source="donatepay")
+
+    def _handle_row(self, row: dict, bootstrap: bool, source: str) -> None:
+        if not isinstance(row, dict):
             return
-        if str(row.get("type") or "donation").lower() not in {"", "donation"}:
+        status = str(row.get("status") or "").lower()
+        if status not in _SUCCESS:
             return
-        donation_id = str(row.get("id") or "")
+        dtype = str(row.get("type") or "donation").lower()
+        if dtype not in _DONATION_TYPES:
+            return
+        donation_id = str(row.get("id") or row.get("donation_id") or "")
         if donation_id and donation_id in self._seen:
             return
         if donation_id:
             self._seen.add(donation_id)
+            if len(self._seen) > 4000:
+                self._seen = set(list(self._seen)[-2000:])
         if bootstrap:
             return
         vars_ = row.get("vars") if isinstance(row.get("vars"), dict) else {}
-        username = str(vars_.get("name") or row.get("what") or row.get("name") or "Аноним")
-        message = str(row.get("comment") or vars_.get("comment") or "")
-        amount = float(row.get("sum") or vars_.get("sum") or 0)
-        currency = str(row.get("currency") or vars_.get("currency") or self.currency)
-        self.on_donation(
-            Donation(
-                username=username,
+        merged = {**vars_, **row}
+        item = donation_from_payload(merged, source)
+        if item is None:
+            amount = parse_amount(row.get("sum") or vars_.get("sum"))
+            if amount <= 0:
+                return
+            item = Donation(
+                username=str(vars_.get("name") or row.get("what") or row.get("name") or "Аноним"),
                 amount=amount,
-                currency=currency,
-                message=message,
-                source="donatepay",
+                currency=str(row.get("currency") or vars_.get("currency") or self.currency),
+                message=str(row.get("comment") or vars_.get("comment") or ""),
+                source=source,
                 donation_id=donation_id,
             )
-        )
+        self.connected = True
+        self.on_donation(item)
+
+
+def _extract_user_id(html: str) -> str:
+    patterns = (
+        r"function\s+getUserId\(\)\s*\{\s*return\s+parseInt\('(\d+)'",
+        r"getUserId\(\)\s*\{\s*return\s+parseInt\('(\d+)'",
+        r"userId['\"]?\s*[:=]\s*['\"]?(\d+)",
+        r"user_id['\"]?\s*[:=]\s*['\"]?(\d+)",
+        r"parseInt\('(\d+)'\)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, html, re.I)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _extract_csrf(html: str) -> str:
+    patterns = (
+        r"function\s+csrf\(\)\s*\{\s*return\s+'([^']+)'",
+        r"csrf\(\)\s*\{\s*return\s+'([^']+)'",
+        r"csrf-token['\"]?\s*content=['\"]([^'\"]+)",
+        r"name=['\"]csrf-token['\"]\s+content=['\"]([^'\"]+)",
+        r"_token['\"]?\s*[:=]\s*['\"]([^'\"]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, html, re.I)
+        if match:
+            return match.group(1)
+    return ""

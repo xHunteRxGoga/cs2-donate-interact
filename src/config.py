@@ -38,11 +38,12 @@ DEFAULTS: dict[str, Any] = {
         "redirect_uri": "http://127.0.0.1:53682/callback",
         "mode": "websocket",
     },
-    "donatepay": {
-        "enabled": True,
-        "api_token": "",
-        "poll_interval_sec": 20,
-    },
+        "donatepay": {
+            "enabled": True,
+            "api_token": "",
+            "widget_token": "",
+            "poll_interval_sec": 8,
+        },
     "trula": {
         "enabled": True,
         "widget_url": "",
@@ -171,6 +172,8 @@ def load_config() -> dict[str, Any]:
                 data["donationalerts"][key] = secrets[f"donationalerts_{key}"]
         if secrets.get("donatepay_api_token"):
             data["donatepay"]["api_token"] = secrets["donatepay_api_token"]
+        if secrets.get("donatepay_widget_token"):
+            data["donatepay"]["widget_token"] = secrets["donatepay_widget_token"]
         if secrets.get("trula_widget_url"):
             data["trula"]["widget_url"] = secrets["trula_widget_url"]
     return data
@@ -188,6 +191,7 @@ def save_config(data: dict[str, Any]) -> None:
             "donationalerts_client_id": payload["donationalerts"].get("client_id", ""),
             "donationalerts_client_secret": payload["donationalerts"].get("client_secret", ""),
             "donatepay_api_token": payload["donatepay"].get("api_token", ""),
+            "donatepay_widget_token": payload["donatepay"].get("widget_token", ""),
             "trula_widget_url": payload["trula"].get("widget_url", ""),
         }
     )
@@ -196,6 +200,7 @@ def save_config(data: dict[str, Any]) -> None:
     payload["donationalerts"]["client_id"] = ""
     payload["donationalerts"]["client_secret"] = ""
     payload["donatepay"]["api_token"] = ""
+    payload["donatepay"]["widget_token"] = ""
     payload["trula"]["widget_url"] = ""
     CONFIG_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     SECRETS_PATH.write_text(json.dumps(secrets, ensure_ascii=False, indent=2), encoding="utf-8")

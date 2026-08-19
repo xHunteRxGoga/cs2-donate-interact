@@ -38,11 +38,13 @@ python -m src.main
 
 ## Как привязать донаты
 
-Подробные шаги: [SETUP.md](SETUP.md). Кратко:
+Подробные шаги: [SETUP.md](SETUP.md). Кнопка **Тест** не проверяет DonationAlerts/DonatePay/Trula — только эффект в CS2.
 
-- **DonationAlerts:** [настройки кабинета](https://www.donationalerts.com/dashboard/general) → скопируй **Секретный токен** или ссылку виджета с `token=` → вкладка Донаты → DonationAlerts → Подключить.
-- **DonatePay:** [donatepay.ru/page/api](https://donatepay.ru/page/api) → скопируй API-ключ → DonatePay → Подключить.
-- **Trula:** кабинет [trula.io](https://trula.io/) → Виджеты → Алерты → скопируй OBS-ссылку целиком → Trula → Подключить.
+На вкладке **Донаты** нажми **Привязать аккаунт** у нужной площадки: откроется кабинет, копируешь токен/ссылку, подтверждаешь — приложение само вставляет из буфера и начинает слушать.
+
+- **DonationAlerts:** [настройки](https://www.donationalerts.com/dashboard/general) → **Секретный токен** или ссылка виджета с `token=`.
+- **DonatePay:** [виджет оповещений](https://donatepay.ru/donation/notifications/) **и** [API-ключ](https://donatepay.ru/page/api).
+- **Trula:** кабинет [trula.io](https://trula.io/) → Виджеты → Алерты → OBS-ссылка целиком (не `/dp/...`).
 
 Можно включить одну площадку или все сразу. Токены пишутся в `secrets.json` и не попадают в git.
 

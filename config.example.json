@@ -27,7 +27,8 @@
   "donatepay": {
     "enabled": true,
     "api_token": "",
-    "poll_interval_sec": 20
+    "widget_token": "",
+    "poll_interval_sec": 8
   },
   "trula": {
     "enabled": true,
