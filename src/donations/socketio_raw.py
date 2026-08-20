@@ -55,11 +55,13 @@ class RawSocketIO:
         emit_on_connect: list[tuple[str, object]] | None = None,
         stop_event=None,
         label: str = "socket",
+        origin: str | None = None,
+        websocket_only: bool = False,
     ) -> None:
         last_error: Exception | None = None
-        for eio in (3, 4):
+        for eio in (4, 3):
             try:
-                await self._listen(base, eio, emit_on_connect or [], stop_event, label)
+                await self._listen(base, eio, emit_on_connect or [], stop_event, label, origin, websocket_only)
                 return
             except Exception as exc:
                 last_error = exc
@@ -74,24 +76,27 @@ class RawSocketIO:
         emit_on_connect: list[tuple[str, object]],
         stop_event,
         label: str,
+        origin: str | None = None,
+        websocket_only: bool = False,
     ) -> None:
         sid = ""
         ping_interval = 25
         http_url = _http_base(base)
-        origin = _origin(base if "://" in base else f"https://{base}")
-        try:
-            async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-                resp = await client.get(http_url, params={"EIO": eio, "transport": "polling"})
-                if resp.status_code < 400:
-                    text = resp.text
-                    if text[:1].isdigit() and ":" in text[:6]:
-                        text = text.split(":", 1)[1]
-                    if text.startswith("0"):
-                        hello = json.loads(text[1:])
-                        sid = str(hello.get("sid") or "")
-                        ping_interval = int(hello.get("pingInterval") or 25000) / 1000
-        except Exception:
-            sid = ""
+        origin = origin or _origin(base if "://" in base else f"https://{base}")
+        if not websocket_only:
+            try:
+                async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+                    resp = await client.get(http_url, params={"EIO": eio, "transport": "polling"})
+                    if resp.status_code < 400:
+                        text = resp.text
+                        if text[:1].isdigit() and ":" in text[:6]:
+                            text = text.split(":", 1)[1]
+                        if text.startswith("0"):
+                            hello = json.loads(text[1:])
+                            sid = str(hello.get("sid") or "")
+                            ping_interval = int(hello.get("pingInterval") or 25000) / 1000
+            except Exception:
+                sid = ""
 
         ws_url = _socket_url(base, eio, sid)
         headers = {"Origin": origin}
@@ -129,6 +134,8 @@ class RawSocketIO:
                         ping_interval = int(hello.get("pingInterval") or ping_interval * 1000) / 1000
                     except json.JSONDecodeError:
                         pass
+                    if not opened:
+                        await ws.send("40")
                     continue
                 if packet == "2" or packet.startswith("2"):
                     await ws.send("3" + packet[1:])

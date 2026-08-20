@@ -72,6 +72,11 @@ def extract_token(value: str) -> str:
     raw = (value or "").strip()
     if not raw:
         return ""
+    raw = re.sub(r"(?i)секретный\s*токен\s*:?\s*", "", raw).strip()
+    raw = re.sub(r"(?i)api[-\s]*ключ\s*:?\s*", "", raw).strip()
+    raw = raw.replace("\r", "").replace("\n", "").strip(" '\"")
+    if not raw:
+        return ""
     if "://" in raw or "token=" in raw or "access_token=" in raw:
         parsed = urlparse(raw)
         query = parse_qs(parsed.query)
@@ -123,16 +128,19 @@ def unwrap_payload(args) -> dict | list | None:
         data = args[0] if len(args) == 1 else next((item for item in args if item not in (None, "")), args[0])
     else:
         data = args
-    if isinstance(data, (bytes, bytearray)):
-        data = data.decode("utf-8", "ignore")
-    if isinstance(data, str):
-        text = data.strip()
-        if not text:
-            return None
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            return None
+    for _ in range(3):
+        if isinstance(data, (bytes, bytearray)):
+            data = data.decode("utf-8", "ignore")
+        if isinstance(data, str):
+            text = data.strip()
+            if not text:
+                return None
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                return None
+            continue
+        break
     return data
 
 
@@ -177,8 +185,15 @@ def _looks_like_donation(payload: dict) -> bool:
 def donation_from_payload(payload: dict, source: str) -> Donation | None:
     if not isinstance(payload, dict):
         return None
+    extra = payload.get("additional_data")
+    if isinstance(extra, str):
+        try:
+            extra = json.loads(extra)
+        except json.JSONDecodeError:
+            extra = None
     nested = payload.get("vars") if isinstance(payload.get("vars"), dict) else {}
-    merged = {**nested, **payload}
+    extra_dict = extra if isinstance(extra, dict) else {}
+    merged = {**extra_dict, **nested, **payload}
     amount = 0.0
     for key in _AMOUNT_KEYS:
         amount = parse_amount(merged.get(key))

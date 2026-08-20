@@ -29,6 +29,7 @@ BUTTON = "#3a2458"
 BUTTON_HOVER = "#4e3174"
 OK = "#7ee0b8"
 BAD = "#ff7b9c"
+WARN = "#f5d06f"
 ENTRY_BG = "#0e0816"
 HIGHLIGHT = "#8b6cc9"
 
@@ -170,11 +171,11 @@ class App(tk.Tk):
         head.pack(fill="x", padx=18, pady=(16, 8))
         ttk.Label(head, text="CS2 Donate Interact", style="Title.TLabel").pack(side="left")
         ttk.Label(head, text="  донат-интерактив", style="Muted.TLabel").pack(side="left", pady=(6, 0))
-        self.status_da = ttk.Label(head, text="DA: нет", style="Muted.TLabel")
-        self.status_dp = ttk.Label(head, text="DP: нет", style="Muted.TLabel")
-        self.status_trula = ttk.Label(head, text="Trula: нет", style="Muted.TLabel")
-        self.status_cs2 = ttk.Label(head, text="CS2: —", style="Muted.TLabel")
-        self.status_sys = ttk.Label(head, text="эффекты: вкл", style="Muted.TLabel")
+        self.status_da = tk.Label(head, text="DA: нет", bg=BG, fg=BAD, font=("Segoe UI", 9, "bold"))
+        self.status_dp = tk.Label(head, text="DP: нет", bg=BG, fg=BAD, font=("Segoe UI", 9, "bold"))
+        self.status_trula = tk.Label(head, text="Trula: нет", bg=BG, fg=BAD, font=("Segoe UI", 9, "bold"))
+        self.status_cs2 = tk.Label(head, text="CS2: —", bg=BG, fg=MUTED, font=("Segoe UI", 9, "bold"))
+        self.status_sys = tk.Label(head, text="эффекты: вкл", bg=BG, fg=OK, font=("Segoe UI", 9, "bold"))
         self.status_sys.pack(side="right", padx=8)
         self.status_cs2.pack(side="right", padx=8)
         self.status_trula.pack(side="right", padx=8)
@@ -473,19 +474,62 @@ class App(tk.Tk):
         self._build_trula_fields(tab_trula)
 
     def _build_how(self, parent: tk.Widget) -> None:
+        dash = tk.Frame(parent, bg=PANEL, highlightbackground=HIGHLIGHT, highlightthickness=1)
+        dash.pack(fill="x", pady=(8, 10), padx=2)
+        tk.Label(
+            dash,
+            text="Живой статус. Зелёный = донаты реально могут прийти. «Токен вставлен» само по себе ничего не значит.",
+            bg=PANEL,
+            fg=MUTED,
+            font=("Segoe UI", 9),
+            wraplength=980,
+            justify="left",
+        ).pack(anchor="w", padx=12, pady=(10, 6))
+        row = tk.Frame(dash, bg=PANEL)
+        row.pack(fill="x", padx=12, pady=(0, 8))
+        self.dash_da = tk.Label(row, text="DonationAlerts: не привязан", bg=PANEL, fg=BAD, font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
+        self.dash_dp = tk.Label(row, text="DonatePay: не привязан", bg=PANEL, fg=BAD, font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
+        self.dash_trula = tk.Label(row, text="Trula: не привязана", bg=PANEL, fg=BAD, font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
+        self.dash_da.pack(fill="x")
+        self.dash_dp.pack(fill="x")
+        self.dash_trula.pack(fill="x")
+        self.dash_da_d = tk.Label(dash, text="", bg=PANEL, fg=MUTED, font=("Segoe UI", 9), anchor="w", wraplength=980, justify="left")
+        self.dash_dp_d = tk.Label(dash, text="", bg=PANEL, fg=MUTED, font=("Segoe UI", 9), anchor="w", wraplength=980, justify="left")
+        self.dash_trula_d = tk.Label(dash, text="", bg=PANEL, fg=MUTED, font=("Segoe UI", 9), anchor="w", wraplength=980, justify="left")
+        self.dash_da_d.pack(fill="x", padx=12)
+        self.dash_dp_d.pack(fill="x", padx=12)
+        self.dash_trula_d.pack(fill="x", padx=12)
+        self.last_don_lbl = tk.Label(
+            dash,
+            text="Последний донат, который увидело приложение: ещё не было",
+            bg=PANEL,
+            fg=ACCENT,
+            font=("Segoe UI", 10, "bold"),
+            anchor="w",
+            wraplength=980,
+            justify="left",
+        )
+        self.last_don_lbl.pack(fill="x", padx=12, pady=(8, 12))
+
         lines = [
-            "Кнопка «Привязать аккаунт» открывает кабинет площадки. Скопируй токен/ссылку, вернись сюда и подтверди —",
-            "приложение само вставит из буфера, сохранит и начнёт слушать донаты. Можно подключить одну площадку или все три.",
-            "Тест на вкладке «Эффекты» проверяет только CS2. Живой донат всегда даёт звук и табличку снизу — если их нет, приложение донат не увидело.",
-            "Кнопка «Проверить табличку» внизу показывает плашку без CS2. Если её не видно поверх игры — поставь CS2 «Во весь экран в окне».",
+            "1. Нажми «Открыть кабинет», скопируй токен/ссылку.",
+            "2. Вставь в поле на вкладке площадки.",
+            "3. Нажми «Сохранить и проверить связь» — через несколько секунд будет «подключено» или ошибка.",
+            "4. В кабинете площадки отправь тестовый алерт на 100₽. В логе должна появиться строка «приложение увидело донат».",
+            "Кнопка «Тест» на вкладке Эффекты CS2 не проверяет донаты.",
         ]
         for line in lines:
-            ttk.Label(parent, text=line, style="Muted.TLabel").pack(anchor="w", pady=3)
+            ttk.Label(parent, text=line, style="Muted.TLabel").pack(anchor="w", pady=2)
         btns = ttk.Frame(parent)
         btns.pack(anchor="w", pady=12)
-        ttk.Button(btns, text="Привязать DonationAlerts", style="Accent.TButton", command=lambda: self._bind_account("da")).pack(side="left", padx=(0, 8))
-        ttk.Button(btns, text="Привязать DonatePay", style="Accent.TButton", command=lambda: self._bind_account("dp")).pack(side="left", padx=(0, 8))
-        ttk.Button(btns, text="Привязать Trula", style="Accent.TButton", command=lambda: self._bind_account("trula")).pack(side="left")
+        ttk.Button(btns, text="Открыть кабинет DonationAlerts", command=lambda: self._open_cabinet("da")).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="Открыть кабинет DonatePay", command=lambda: self._open_cabinet("dp")).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="Открыть кабинет Trula", command=lambda: self._open_cabinet("trula")).pack(side="left")
+        checks = ttk.Frame(parent)
+        checks.pack(anchor="w", pady=(0, 8))
+        ttk.Button(checks, text="Проверить DonationAlerts", style="Accent.TButton", command=lambda: self._check_link("da")).pack(side="left", padx=(0, 8))
+        ttk.Button(checks, text="Проверить DonatePay", style="Accent.TButton", command=lambda: self._check_link("dp")).pack(side="left", padx=(0, 8))
+        ttk.Button(checks, text="Проверить Trula", style="Accent.TButton", command=lambda: self._check_link("trula")).pack(side="left")
 
     def _build_da_fields(self, parent: tk.Widget) -> None:
         da = self.cfg["donationalerts"]
@@ -497,7 +541,7 @@ class App(tk.Tk):
             text="Кабинет → Настройки / Оповещения → «Секретный токен» или ссылка виджета с token=. Потом «Привязать аккаунт».",
             style="Muted.TLabel",
         ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
-        ttk.Button(box, text="Привязать аккаунт DonationAlerts", style="Accent.TButton", command=lambda: self._bind_account("da")).grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Button(box, text="Открыть кабинет DonationAlerts", command=lambda: self._open_cabinet("da")).grid(row=2, column=1, sticky="w", pady=4)
         ttk.Label(box, text="Секретный токен или ссылка виджета").grid(row=3, column=0, sticky="e", padx=8, pady=6)
         da_wrap = ttk.Frame(box)
         da_wrap.grid(row=3, column=1, sticky="we", pady=6)
@@ -505,7 +549,7 @@ class App(tk.Tk):
         self.da_widget.insert(0, da.get("widget_token", ""))
         self.da_widget.pack(side="left", fill="x", expand=True)
         self._paste_button(da_wrap, self.da_widget).pack(side="left", padx=(8, 0))
-        ttk.Button(box, text="Подключить DonationAlerts", command=self._reconnect_da).grid(row=4, column=1, sticky="w", pady=8)
+        ttk.Button(box, text="Сохранить и проверить связь", style="Accent.TButton", command=lambda: self._check_link("da")).grid(row=4, column=1, sticky="w", pady=8)
 
         ttk.Label(box, text="Дополнительно, если виджет не подходит — OAuth API", style="Muted.TLabel").grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 4))
         ttk.Label(box, text="Access token").grid(row=6, column=0, sticky="e", padx=8, pady=4)
@@ -537,7 +581,7 @@ class App(tk.Tk):
         box.pack(fill="x", pady=8)
         ttk.Label(box, text="Нужны два куска из кабинета DonatePay: API-ключ и ссылка виджета оповещений.").grid(row=0, column=0, columnspan=3, sticky="w", pady=4)
         ttk.Label(box, text="API даёт историю, виджет даёт донат сразу. Лучше вставить оба и нажать «Привязать аккаунт».", style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
-        ttk.Button(box, text="Привязать аккаунт DonatePay", style="Accent.TButton", command=lambda: self._bind_account("dp")).grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Button(box, text="Открыть кабинет DonatePay", command=lambda: self._open_cabinet("dp")).grid(row=2, column=1, sticky="w", pady=4)
         self.dp_enabled = tk.BooleanVar(value=bool(dp.get("enabled", True)))
         ttk.Checkbutton(box, text="Слушать DonatePay", variable=self.dp_enabled).grid(row=3, column=1, sticky="w", pady=4)
         ttk.Label(box, text="API-ключ").grid(row=4, column=0, sticky="e", padx=8, pady=6)
@@ -558,7 +602,7 @@ class App(tk.Tk):
         self.dp_interval = self._entry(box, 8)
         self.dp_interval.insert(0, str(dp.get("poll_interval_sec", 8)))
         self.dp_interval.grid(row=6, column=1, sticky="w", pady=4)
-        ttk.Button(box, text="Подключить DonatePay", command=self._reconnect_dp).grid(row=7, column=1, sticky="w", pady=8)
+        ttk.Button(box, text="Сохранить и проверить связь", style="Accent.TButton", command=lambda: self._check_link("dp")).grid(row=7, column=1, sticky="w", pady=8)
         ttk.Label(box, text="Виджет: donatepay.ru/donation/notifications → скопируй ссылку widget.donatepay.ru/alert-box/widget/…", style="Muted.TLabel").grid(row=8, column=0, columnspan=3, sticky="w", pady=8)
         box.columnconfigure(1, weight=1)
 
@@ -568,7 +612,7 @@ class App(tk.Tk):
         box.pack(fill="x", pady=8)
         ttk.Label(box, text="Нужна ссылка виджета алертов, которую вставляют в OBS как Browser Source.").grid(row=0, column=0, columnspan=3, sticky="w", pady=4)
         ttk.Label(box, text="Лучше OBS-ссылка алерта. Страницу /dp/... тоже можно вставить — будет опрос, но виджет надёжнее.", style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
-        ttk.Button(box, text="Привязать аккаунт Trula", style="Accent.TButton", command=lambda: self._bind_account("trula")).grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Button(box, text="Открыть кабинет Trula", command=lambda: self._open_cabinet("trula")).grid(row=2, column=1, sticky="w", pady=4)
         self.trula_enabled = tk.BooleanVar(value=bool(trula.get("enabled", True)))
         ttk.Checkbutton(box, text="Слушать Trula", variable=self.trula_enabled).grid(row=3, column=1, sticky="w", pady=4)
         ttk.Label(box, text="Ссылка виджета или токен").grid(row=4, column=0, sticky="e", padx=8, pady=6)
@@ -578,7 +622,7 @@ class App(tk.Tk):
         self.trula_widget.insert(0, trula.get("widget_url", ""))
         self.trula_widget.pack(side="left", fill="x", expand=True)
         self._paste_button(trula_wrap, self.trula_widget).pack(side="left", padx=(8, 0))
-        ttk.Button(box, text="Подключить Trula", command=self._reconnect_trula).grid(row=5, column=1, sticky="w", pady=8)
+        ttk.Button(box, text="Сохранить и проверить связь", style="Accent.TButton", command=lambda: self._check_link("trula")).grid(row=5, column=1, sticky="w", pady=8)
         box.columnconfigure(1, weight=1)
 
     def _build_keys(self) -> None:
@@ -643,7 +687,7 @@ class App(tk.Tk):
         self.log_box.pack(fill="both", expand=True, pady=8)
         self.log("Приложение запущено. Дроп/мышь/граната работают только если CS2 в фокусе.")
         self.log("Для клавиш в CS2 запусти run-admin.bat. Игра — «Во весь экран в окне», не эксклюзивный полный экран.")
-        self.log("Живой донат всегда даёт звук + табличку снизу. Если в логе нет «приложение увидело донат» — площадка не привязана.")
+        self.log("Живой донат: зелёный статус «подключено», потом тест 100₽ в кабинете. В логе должно быть «приложение увидело донат».")
         self.log(f"Файл лога: {LOG_PATH}")
 
     def _collect(self) -> None:
@@ -739,7 +783,7 @@ class App(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
         self.log("Открой браузер и подтверди доступ DonationAlerts.")
 
-    def _bind_account(self, kind: str) -> None:
+    def _open_cabinet(self, kind: str) -> None:
         pages = {
             "da": [
                 "https://www.donationalerts.com/dashboard/general",
@@ -754,73 +798,82 @@ class App(tk.Tk):
                 "https://trula.io/",
             ],
         }
-        titles = {
-            "da": "DonationAlerts",
-            "dp": "DonatePay",
-            "trula": "Trula",
-        }
         hints = {
-            "da": (
-                "В браузере откроется кабинет DonationAlerts.\n\n"
-                "1. Войди в аккаунт, куда кидают донаты.\n"
-                "2. Скопируй «Секретный токен» или ссылку виджета с token=.\n"
-                "3. Нажми OK — приложение вставит токен из буфера и начнёт слушать донаты.\n\n"
-                "Проверка: в кабинете DA отправь тестовый алерт на 100₽."
-            ),
-            "dp": (
-                "Откроются две страницы DonatePay.\n\n"
-                "1. Со страницы оповещений скопируй ссылку виджета "
-                "(widget.donatepay.ru/alert-box/widget/…).\n"
-                "2. Со страницы API скопируй ключ.\n"
-                "3. Нажми OK — сначала вставится то, что сейчас в буфере.\n"
-                "   Если это ссылка виджета, она попадёт в поле виджета; если ключ — в API.\n"
-                "4. Скопируй второй кусок и нажми «Подключить DonatePay».\n\n"
-                "Виджет даёт донат сразу, API — подстраховка."
-            ),
-            "trula": (
-                "Откроется кабинет Trula.\n\n"
-                "1. Войди аккаунтом стримера.\n"
-                "2. Виджеты → алерты/оповещения.\n"
-                "3. Скопируй ссылку, которую вставляют в OBS как Browser Source (целиком).\n"
-                "4. Нажми OK — приложение вставит ссылку и начнёт слушать.\n\n"
-                "Страница доната /dp/... — запасной вариант. Надёжнее именно OBS-ссылка алерта."
-            ),
+            "da": "Скопируй «Секретный токен» или ссылку виджета с token=, вставь в поле и нажми «Сохранить и проверить связь».",
+            "dp": "Скопируй ссылку widget.donatepay.ru/alert-box/widget/… и отдельно API-ключ со страницы /page/api. Вставь оба поля, потом «Сохранить и проверить связь».",
+            "trula": "Скопируй OBS-ссылку виджета алертов целиком, вставь в поле и нажми «Сохранить и проверить связь».",
         }
+        titles = {"da": "DonationAlerts", "dp": "DonatePay", "trula": "Trula"}
         for url in pages[kind]:
             self._open(url)
-        if not messagebox.askokcancel(titles[kind], hints[kind]):
-            return
-        text = ""
+        messagebox.showinfo(titles[kind], hints[kind])
+
+    def _check_link(self, kind: str) -> None:
+        titles = {"da": "DonationAlerts", "dp": "DonatePay", "trula": "Trula"}
+        title = titles[kind]
         try:
-            text = (self.clipboard_get() or "").strip().replace("\r", "").replace("\n", "")
-        except tk.TclError:
-            text = ""
-        if not text:
-            messagebox.showinfo(titles[kind], "В буфере пусто. Скопируй токен ещё раз и нажми «Подключить».")
+            self._collect()
+            save_config(self.cfg)
+        except Exception as exc:
+            messagebox.showerror(title, str(exc))
             return
-        low = text.lower()
         if kind == "da":
-            self.da_widget.delete(0, "end")
-            self.da_widget.insert(0, text)
-            self._save()
+            if not (self.cfg["donationalerts"].get("widget_token") or self.cfg["donationalerts"].get("access_token")):
+                messagebox.showinfo(title, "Сначала вставь секретный токен или ссылку виджета в поле.")
+                return
             self._reconnect_da()
+            client = self.da
         elif kind == "dp":
-            if "widget.donatepay" in low or "alert-box" in low:
-                self.dp_widget.delete(0, "end")
-                self.dp_widget.insert(0, text)
-            else:
-                self.dp_token.delete(0, "end")
-                self.dp_token.insert(0, text)
+            if not (
+                self.cfg["donatepay"].get("api_token") or self.cfg["donatepay"].get("widget_token")
+            ):
+                messagebox.showinfo(title, "Сначала вставь API-ключ и/или ссылку виджета.")
+                return
             self.dp_enabled.set(True)
-            self._save()
+            self.cfg["donatepay"]["enabled"] = True
             self._reconnect_dp()
+            client = self.dp
         else:
-            self.trula_widget.delete(0, "end")
-            self.trula_widget.insert(0, text)
+            if not self.cfg["trula"].get("widget_url"):
+                messagebox.showinfo(title, "Сначала вставь ссылку виджета Trula.")
+                return
             self.trula_enabled.set(True)
-            self._save()
+            self.cfg["trula"]["enabled"] = True
             self._reconnect_trula()
-        self.log(f"{titles[kind]}: аккаунт привязан, жду донаты. В логе должно появиться «подключен» / «слушатели запущены».")
+            client = self.trula
+        self.log(f"{title}: проверяю связь, жду до 12 сек…")
+
+        def wait() -> None:
+            deadline = time.time() + 12
+            while time.time() < deadline:
+                if client.link.state == "live" or client.connected:
+                    def ok() -> None:
+                        messagebox.showinfo(
+                            title,
+                            "Подключено.\n\n"
+                            f"{client.link.detail}\n\n"
+                            "Теперь в кабинете площадки отправь тестовый алерт на 100₽.\n"
+                            "В логе должна появиться строка «приложение увидело донат».\n"
+                            "Если её нет — приложение донат не получило.",
+                        )
+                    self.after(0, ok)
+                    return
+                if client.link.state == "bad":
+                    detail = client.link.detail
+                    self.after(0, lambda d=detail: messagebox.showerror(title, d))
+                    return
+                time.sleep(0.3)
+            detail = client.link.detail or "сокет не подтвердился"
+            def late() -> None:
+                messagebox.showwarning(
+                    title,
+                    "За 12 секунд не получил «подключено».\n\n"
+                    f"Сейчас: {detail}\n\n"
+                    "Чаще всего вставлен не тот токен/ссылка. Проверь лог и вставь заново.",
+                )
+            self.after(0, late)
+
+        threading.Thread(target=wait, daemon=True).start()
 
     def _reconnect_da(self) -> None:
         self._collect()
@@ -859,7 +912,7 @@ class App(tk.Tk):
         if da.get("widget_token") or da.get("access_token"):
             self.da.start(da.get("access_token", ""), da.get("mode", "websocket"), da.get("widget_token", ""))
         else:
-            self.log("DonationAlerts не привязан. Вкладка Донаты → Привязать аккаунт.")
+            self.log("DonationAlerts не привязан. Вкладка Донаты → вставь токен и нажми «Сохранить и проверить связь».")
         dp = self.cfg["donatepay"]
         if dp.get("enabled") and (dp.get("api_token") or dp.get("widget_token")):
             self.dp.start(
@@ -869,11 +922,11 @@ class App(tk.Tk):
                 dp.get("widget_token", ""),
             )
         elif dp.get("enabled"):
-            self.log("DonatePay не привязан. Вкладка Донаты → Привязать аккаунт.")
+            self.log("DonatePay не привязан. Вкладка Донаты → вставь ключ и ссылку виджета, затем «Сохранить и проверить связь».")
         if self.cfg["trula"].get("enabled") and self.cfg["trula"].get("widget_url"):
             self.trula.start(self.cfg["trula"]["widget_url"])
         elif self.cfg["trula"].get("enabled"):
-            self.log("Trula не привязана. Вкладка Донаты → Привязать аккаунт.")
+            self.log("Trula не привязана. Вкладка Донаты → вставь ссылку виджета и нажми «Сохранить и проверить связь».")
         if self.cfg["webhook"].get("enabled"):
             self.webhook.start(self.cfg["webhook"]["host"], int(self.cfg["webhook"]["port"]))
 
@@ -883,6 +936,19 @@ class App(tk.Tk):
             f"{kind}: {donation.username} — {donation.amount:g} {donation.currency} "
             f"id={donation.donation_id or '-'} source={donation.source} msg={donation.message!r}"
         )
+        text = (
+            f"Последний донат, который увидело приложение: {donation.username} — "
+            f"{donation.amount:g} {donation.currency} ({donation.source})"
+        )
+
+        def show() -> None:
+            if hasattr(self, "last_don_lbl"):
+                self.last_don_lbl.configure(text=text, fg=OK)
+
+        if threading.current_thread() is threading.main_thread():
+            show()
+        else:
+            self.after(0, show)
         self.engine.enqueue_donation(donation)
 
     def _test_overlay(self) -> None:
@@ -921,45 +987,32 @@ class App(tk.Tk):
         self.cfg["general"]["enabled"] = True
         self.log("Эффекты снова включены.")
 
+    def _paint_link(self, head_lbl: tk.Label, dash_lbl: tk.Label | None, dash_detail: tk.Label | None, client, short: str) -> None:
+        colors = {"off": BAD, "wait": WARN, "live": OK, "bad": BAD}
+        words = {"off": "нет", "wait": "подключаюсь", "live": "подключено", "bad": "ошибка"}
+        state = getattr(getattr(client, "link", None), "state", "off")
+        detail = getattr(getattr(client, "link", None), "detail", "")
+        color = colors.get(state, MUTED)
+        head_lbl.configure(text=f"{short}: {words.get(state, state)}", fg=color)
+        if dash_lbl is not None:
+            dash_lbl.configure(text=client.link.label(), fg=color)
+        if dash_detail is not None:
+            extra = client.link.last if client.link.last else ""
+            dash_detail.configure(text=f"    {detail}" + (f"  |  {extra}" if extra and extra not in detail else ""))
+
     def _tick(self) -> None:
         running = is_cs2_running(self.cfg["cs2"]["process_name"])
-        self.status_cs2.configure(text="CS2: запущена" if running else "CS2: нет")
-        token = self.da_token.get().strip() if hasattr(self, "da_token") else ""
-        widget = self.da_widget.get().strip() if hasattr(self, "da_widget") else ""
-        dp_token = self.dp_token.get().strip() if hasattr(self, "dp_token") else ""
-        dp_widget = self.dp_widget.get().strip() if hasattr(self, "dp_widget") else ""
-        dp_on = self.dp_enabled.get() if hasattr(self, "dp_enabled") else False
-        trula_url = self.trula_widget.get().strip() if hasattr(self, "trula_widget") else ""
-        trula_on = self.trula_enabled.get() if hasattr(self, "trula_enabled") else False
-        if self.da.connected:
-            self.status_da.configure(text="DA: слушаю")
-        elif token or widget:
-            self.status_da.configure(text="DA: токен есть")
-        else:
-            self.status_da.configure(text="DA: нет токена")
-        if not dp_on:
-            self.status_dp.configure(text="DP: выкл")
-        elif self.dp.connected:
-            self.status_dp.configure(text="DP: слушаю")
-        elif dp_token or dp_widget:
-            self.status_dp.configure(text="DP: токен есть")
-        else:
-            self.status_dp.configure(text="DP: нет токена")
-        if not trula_on:
-            self.status_trula.configure(text="Trula: выкл")
-        elif self.trula.connected:
-            self.status_trula.configure(text="Trula: слушаю")
-        elif trula_url:
-            self.status_trula.configure(text="Trula: ссылка есть")
-        else:
-            self.status_trula.configure(text="Trula: нет ссылки")
+        self.status_cs2.configure(text="CS2: запущена" if running else "CS2: нет", fg=OK if running else MUTED)
+        self._paint_link(self.status_da, getattr(self, "dash_da", None), getattr(self, "dash_da_d", None), self.da, "DA")
+        self._paint_link(self.status_dp, getattr(self, "dash_dp", None), getattr(self, "dash_dp_d", None), self.dp, "DP")
+        self._paint_link(self.status_trula, getattr(self, "dash_trula", None), getattr(self, "dash_trula_d", None), self.trula, "Trula")
         if self.engine.paused or not self.cfg["general"]["enabled"]:
-            self.status_sys.configure(text="эффекты: выкл")
+            self.status_sys.configure(text="эффекты: выкл", fg=BAD)
         elif self.engine.busy:
-            self.status_sys.configure(text=f"эффект: {EFFECT_TITLES.get(self.engine.current_effect, '…')}")
+            self.status_sys.configure(text=f"эффект: {EFFECT_TITLES.get(self.engine.current_effect, '…')}", fg=WARN)
         else:
-            self.status_sys.configure(text="эффекты: вкл")
-        self.after(1000, self._tick)
+            self.status_sys.configure(text="эффекты: вкл", fg=OK)
+        self.after(500, self._tick)
 
     def _on_close(self) -> None:
         try:

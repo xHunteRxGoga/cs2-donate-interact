@@ -11,6 +11,7 @@ import httpx
 from src.donations.centrifuge_json import CentrifugeJSON
 from src.donations.models import Donation
 from src.donations.parse import donation_from_payload, extract_token, iter_donation_dicts, parse_amount
+from src.donations.linkstate import LinkState
 
 
 DP_API = "https://donatepay.ru/api/v1"
@@ -40,6 +41,7 @@ class DonatePayClient:
         self._seen: set[str] = set()
         self._generation = 0
         self._last_notes: dict[str, float] = {}
+        self.link = LinkState("DonatePay")
 
     def _note(self, text: str, every: float = 40.0) -> None:
         now = time.monotonic()
@@ -67,12 +69,14 @@ class DonatePayClient:
             self.widget_token = self.widget_token or extract_token(raw_api)
             self.api_token = ""
             self.on_status("DonatePay: в поле API была ссылка виджета — слушаю виджет, API не трогаю")
-        self.poll_interval_sec = max(20.0, float(poll_interval_sec or 20)) if self.api_token else max(5.0, float(poll_interval_sec or 8))
+        self.poll_interval_sec = max(8.0, float(poll_interval_sec or 8)) if self.api_token else max(5.0, float(poll_interval_sec or 8))
         self.currency = currency or "RUB"
         self.connected = False
         if not self.api_token and not self.widget_token:
-            self.on_status("DonatePay: нет API-ключа и токена виджета. Нажми «Привязать аккаунт».")
+            self.link.set("off", "не привязан — нужны API-ключ и ссылка виджета")
+            self.on_status("DonatePay: нет API-ключа и токена виджета. Вставь оба и нажми «Сохранить и проверить связь».")
             return
+        self.link.set("wait", "подключаюсь к DonatePay…")
         self._stop.clear()
         self._seen.clear()
         threading.Thread(target=self._run, args=(gen,), name="donatepay", daemon=True).start()
@@ -81,6 +85,7 @@ class DonatePayClient:
         self._generation += 1
         self._stop.set()
         self.connected = False
+        self.link.set("off", "остановлен")
 
     def _run(self, gen: int) -> None:
         if gen != self._generation:
@@ -130,6 +135,7 @@ class DonatePayClient:
                         "DonatePay: это не API-ключ. Вставь ключ со страницы donatepay.ru/page/api. "
                         "Ссылку виджета — в соседнее поле."
                     )
+                    self.link.set("bad", "в поле API не ключ, а что-то другое")
                     if not self.widget_token:
                         self.widget_token = self.api_token
                         await self._widget_loop(gen)
@@ -137,6 +143,7 @@ class DonatePayClient:
                 name = (user.get("data") or {}).get("name") or (user.get("data") or {}).get("id") or "стример"
                 self.on_status(f"DonatePay: вход как {name}, опрос раз в {self.poll_interval_sec:.0f} сек")
                 self.connected = True
+                self.link.set("live", f"API подключен как {name}")
             except Exception as exc:
                 self._note(f"DonatePay: не удалось проверить токен ({exc}), пробую опрос донатов")
 
@@ -240,13 +247,20 @@ class DonatePayClient:
                 except Exception:
                     pass
         if not user_id:
+            self.link.set("bad", "не та ссылка виджета — скопируй из «Оповещения», widget.donatepay.ru/alert-box/widget/…")
             raise RuntimeError("не удалось прочитать userId из виджета — нужна ссылка из «Оповещения»")
         socket_token = str(auth.get("token") or auth.get("socket_token") or "")
         timestamp = str(auth.get("time") or auth.get("timestamp") or "")
         channel = f"notifications#{user_id}"
         hosts = list(dict.fromkeys([*sockets, *DP_SOCKETS]))
         last_error: Exception | None = None
-        centrifuge = CentrifugeJSON(self._on_publication, self.on_status)
+        def status(msg: str) -> None:
+            if "subscribed" in msg.lower():
+                self.connected = True
+                self.link.set("live", "виджет подписан, жду донаты")
+            self.on_status(msg)
+
+        centrifuge = CentrifugeJSON(self._on_publication, status)
         for url in hosts:
             if self._stop.is_set():
                 return
@@ -277,6 +291,8 @@ class DonatePayClient:
 
     def _on_publication(self, data: dict) -> None:
         self.connected = True
+        if self.link.state != "live":
+            self.link.set("live", "виджет подписан, жду донаты")
         rows = iter_donation_dicts(data)
         if not rows and isinstance(data.get("notification"), dict):
             rows = iter_donation_dicts(data["notification"])
@@ -322,6 +338,7 @@ class DonatePayClient:
                 donation_id=donation_id,
             )
         self.connected = True
+        self.link.mark_donation(item.username, item.amount, item.currency)
         self.on_donation(item)
 
 

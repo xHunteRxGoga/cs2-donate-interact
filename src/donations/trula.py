@@ -12,6 +12,7 @@ import httpx
 import websockets
 
 from src.donations.centrifuge_json import CentrifugeJSON
+from src.donations.linkstate import LinkState
 from src.donations.models import Donation
 from src.donations.parse import (
     donation_from_payload,
@@ -42,6 +43,7 @@ class TrulaClient:
         self.connected = False
         self._generation = 0
         self._last_notes: dict[str, float] = {}
+        self.link = LinkState("Trula")
 
     def _note(self, text: str, every: float = 35.0) -> None:
         now = time.monotonic()
@@ -58,11 +60,15 @@ class TrulaClient:
         self.widget = (widget or "").strip()
         self.connected = False
         if not self.widget:
-            self.on_status("Trula: нет ссылки виджета. Нажми «Привязать аккаунт».")
+            self.link.set("off", "не привязана — вставь OBS-ссылку виджета алертов")
+            self.on_status("Trula: нет ссылки виджета. Вставь ссылку и нажми «Сохранить и проверить связь».")
             return
         low = self.widget.lower()
         if "/dp/" in low and not any(key in low for key in ("widget", "overlay", "alert", "obs")):
+            self.link.set("wait", "это страница /dp/..., не OBS-виджет — ловлю как получится")
             self.on_status("Trula: это страница доната /dp/..., не OBS-виджет. Слушаю её как запасной вариант, но лучше вставить ссылку алерта из кабинета.")
+        else:
+            self.link.set("wait", "открываю виджет Trula…")
         self._stop.clear()
         threading.Thread(target=self._run, args=(gen,), name="trula", daemon=True).start()
 
@@ -70,6 +76,7 @@ class TrulaClient:
         self._generation += 1
         self._stop.set()
         self.connected = False
+        self.link.set("off", "остановлена")
 
     def _alive(self, gen: int) -> bool:
         return (not self._stop.is_set()) and gen == self._generation
@@ -134,14 +141,19 @@ class TrulaClient:
                     if "reconnecting-websocket" in js or "WebSocket" in js:
                         info["raw_ws"].extend(_guess_ws_urls(token, origin))
         except Exception as exc:
+            self.link.set("bad", f"ссылка не открылась ({exc})")
             self.on_status(f"Trula: не открылась ссылка виджета ({exc})")
         info["sockets"] = list(dict.fromkeys(info["sockets"]))
         info["raw_ws"] = list(dict.fromkeys([*info["raw_ws"], *_guess_ws_urls(token)]))
         info["apis"] = list(dict.fromkeys(info["apis"]))
         if info["raw_ws"] or info["sockets"]:
             self.on_status(f"Trula: слушаю сокеты {', '.join((info['raw_ws'] or info['sockets'])[:3])}")
+            if self.link.state != "live":
+                self.link.set("wait", "виджет открылся, подключаю сокет")
         else:
             self.on_status("Trula: сокет в ссылке не найден — опрашиваю страницу и API каждые 4 сек")
+            if self.link.state != "live":
+                self.link.set("wait", "сокет не найден, опрашиваю страницу")
         if info["apis"]:
             self.on_status(f"Trula: найдены API {', '.join(info['apis'][:3])}")
         return info
@@ -225,6 +237,9 @@ class TrulaClient:
     async def _raw_ws_once(self, url: str, hello: list[dict], stop: _GenStop) -> None:
         async with websockets.connect(url, ping_interval=20, ping_timeout=20, open_timeout=8) as ws:
             self.on_status(f"Trula: raw WebSocket {url}")
+            self.connected = True
+            if self.link.state != "live":
+                self.link.set("live", "сокет Trula подключен, жду донаты")
             for msg in hello:
                 await ws.send(json.dumps(msg, ensure_ascii=False))
             while not stop.is_set():
@@ -281,12 +296,11 @@ class TrulaClient:
                                 seen.add(marker)
                                 if first:
                                     continue
-                                item = donation_from_payload(row, "trula")
-                                if item:
-                                    self.connected = True
-                                    self.on_donation(item)
+                                self._emit(row)
                             if rows:
                                 self.connected = True
+                                if self.link.state != "live":
+                                    self.link.set("live", "опрос страницы Trula работает")
                     except Exception:
                         continue
                 await asyncio.sleep(4)
@@ -328,6 +342,7 @@ class TrulaClient:
             if len(self._seen) > 4000:
                 self._seen = set(list(self._seen)[-2000:])
         self.connected = True
+        self.link.mark_donation(item.username, item.amount, item.currency)
         self.on_donation(item)
 
 
