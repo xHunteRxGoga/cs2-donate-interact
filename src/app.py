@@ -610,8 +610,8 @@ class App(tk.Tk):
         trula = self.cfg["trula"]
         box = ttk.Frame(parent)
         box.pack(fill="x", pady=8)
-        ttk.Label(box, text="Нужна ссылка виджета алертов, которую вставляют в OBS как Browser Source.").grid(row=0, column=0, columnspan=3, sticky="w", pady=4)
-        ttk.Label(box, text="Лучше OBS-ссылка алерта. Страницу /dp/... тоже можно вставить — будет опрос, но виджет надёжнее.", style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        ttk.Label(box, text="Нужна ссылка панели Trula: https://trula.io/cp/?token=… (её же ставят в OBS).").grid(row=0, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Label(box, text="Страница доната /dp/... не подойдёт. Кабинет /cp/?token= — как раз то, что нужно.", style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
         ttk.Button(box, text="Открыть кабинет Trula", command=lambda: self._open_cabinet("trula")).grid(row=2, column=1, sticky="w", pady=4)
         self.trula_enabled = tk.BooleanVar(value=bool(trula.get("enabled", True)))
         ttk.Checkbutton(box, text="Слушать Trula", variable=self.trula_enabled).grid(row=3, column=1, sticky="w", pady=4)
@@ -801,7 +801,7 @@ class App(tk.Tk):
         hints = {
             "da": "Скопируй «Секретный токен» или ссылку виджета с token=, вставь в поле и нажми «Сохранить и проверить связь».",
             "dp": "Скопируй ссылку widget.donatepay.ru/alert-box/widget/… и отдельно API-ключ со страницы /page/api. Вставь оба поля, потом «Сохранить и проверить связь».",
-            "trula": "Скопируй OBS-ссылку виджета алертов целиком, вставь в поле и нажми «Сохранить и проверить связь».",
+            "trula": "Скопируй ссылку панели https://trula.io/cp/?token=… (её же вставляют в OBS). Вставь в поле и нажми «Сохранить и проверить связь».",
         }
         titles = {"da": "DonationAlerts", "dp": "DonatePay", "trula": "Trula"}
         for url in pages[kind]:

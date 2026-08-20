@@ -27,6 +27,7 @@ _AMOUNT_KEYS = (
 
 _NAME_KEYS = (
     "username",
+    "displayName",
     "name",
     "user_name",
     "nickname",
@@ -154,6 +155,9 @@ def iter_donation_dicts(payload) -> list[dict]:
         return result
     if not isinstance(payload, dict):
         return []
+    if payload.get("type") == "donate" or isinstance(payload.get("donate"), dict):
+        if _looks_like_donation(payload) or _looks_like_donation(payload.get("donate") or {}):
+            return [payload]
     for key in ("notification", "donation", "donate", "alert", "vars", "event", "payload"):
         nested = payload.get(key)
         if isinstance(nested, dict) and _looks_like_donation(nested):
@@ -191,9 +195,15 @@ def donation_from_payload(payload: dict, source: str) -> Donation | None:
             extra = json.loads(extra)
         except json.JSONDecodeError:
             extra = None
+    donate = payload.get("donate") if isinstance(payload.get("donate"), dict) else {}
+    initiator = payload.get("initiator") if isinstance(payload.get("initiator"), dict) else {}
     nested = payload.get("vars") if isinstance(payload.get("vars"), dict) else {}
     extra_dict = extra if isinstance(extra, dict) else {}
-    merged = {**extra_dict, **nested, **payload}
+    merged: dict = {}
+    for part in (payload, extra_dict, nested, donate, initiator):
+        for key, value in part.items():
+            if value is not None:
+                merged[key] = value
     amount = 0.0
     for key in _AMOUNT_KEYS:
         amount = parse_amount(merged.get(key))
@@ -205,9 +215,10 @@ def donation_from_payload(payload: dict, source: str) -> Donation | None:
     username = "Аноним"
     for key in _NAME_KEYS:
         value = merged.get(key)
-        if value not in (None, ""):
-            username = str(value)
-            break
+        if value in (None, "") or isinstance(value, (dict, list)):
+            continue
+        username = str(value)
+        break
     message = ""
     for key in _MESSAGE_KEYS:
         value = merged.get(key)

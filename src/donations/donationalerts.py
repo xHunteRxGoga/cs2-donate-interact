@@ -25,6 +25,8 @@ DA_TOKEN = "https://www.donationalerts.com/oauth/token"
 DA_WS = "wss://centrifugo.donationalerts.com/connection/websocket"
 SCOPES = "oauth-user-show oauth-donation-index oauth-donation-subscribe"
 DA_WIDGET_HOSTS = (
+    "wss://socket.donationalerts.com:443",
+    "https://socket.donationalerts.com",
     "wss://socket.donationalerts.ru:443",
     "https://socket.donationalerts.ru",
     "wss://socket6.donationalerts.ru:443",

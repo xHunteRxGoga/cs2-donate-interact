@@ -44,7 +44,7 @@ python -m src.main
 
 - **DonationAlerts:** [настройки](https://www.donationalerts.com/dashboard/general) → **Секретный токен** или ссылка виджета с `token=`.
 - **DonatePay:** [виджет оповещений](https://donatepay.ru/donation/notifications/) **и** [API-ключ](https://donatepay.ru/page/api).
-- **Trula:** кабинет [trula.io](https://trula.io/) → Виджеты → Алерты → OBS-ссылка целиком (страница `/dp/...` слабее).
+- **Trula:** ссылка панели `https://trula.io/cp/?token=…` (её же в OBS). Страница `/dp/...` не подойдёт.
 
 Можно включить одну площадку или все сразу. Токены пишутся в `secrets.json` и не попадают в git.
 

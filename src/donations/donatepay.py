@@ -252,7 +252,7 @@ class DonatePayClient:
         socket_token = str(auth.get("token") or auth.get("socket_token") or "")
         timestamp = str(auth.get("time") or auth.get("timestamp") or "")
         channel = f"notifications#{user_id}"
-        hosts = list(dict.fromkeys([*sockets, *DP_SOCKETS]))
+        hosts = [item for item in dict.fromkeys([*sockets, *DP_SOCKETS]) if item.startswith("ws")]
         last_error: Exception | None = None
         def status(msg: str) -> None:
             if "subscribed" in msg.lower():
@@ -261,11 +261,25 @@ class DonatePayClient:
             self.on_status(msg)
 
         centrifuge = CentrifugeJSON(self._on_publication, status)
+        if not socket_token:
+            raise RuntimeError("виджет открылся, но socket token не выдан — проверь ссылку из «Оповещения»")
         for url in hosts:
             if self._stop.is_set():
                 return
             try:
-                if socket_token and timestamp:
+                await centrifuge.listen_v2(
+                    url,
+                    token=socket_token,
+                    channel=channel,
+                    stop_event=self._stop,
+                    label="DonatePay",
+                    extra_headers={"Origin": "https://widget.donatepay.ru"},
+                )
+                return
+            except Exception as exc:
+                last_error = exc
+            if timestamp:
+                try:
                     await centrifuge.listen_v1(
                         url,
                         user=str(user_id),
@@ -274,19 +288,11 @@ class DonatePayClient:
                         channel=channel,
                         stop_event=self._stop,
                         label="DonatePay",
+                        extra_headers={"Origin": "https://widget.donatepay.ru"},
                     )
                     return
-                if socket_token:
-                    await centrifuge.listen_v2(
-                        url,
-                        token=socket_token,
-                        channel=channel,
-                        stop_event=self._stop,
-                        label="DonatePay",
-                    )
-                    return
-            except Exception as exc:
-                last_error = exc
+                except Exception as exc:
+                    last_error = exc
         raise RuntimeError(last_error or "нет сокета DonatePay")
 
     def _on_publication(self, data: dict) -> None:
