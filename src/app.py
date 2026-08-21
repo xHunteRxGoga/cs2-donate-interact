@@ -59,8 +59,8 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("CS2 Donate Interact")
-        self.geometry("1120x740")
-        self.minsize(1000, 660)
+        self.geometry("1120x780")
+        self.minsize(960, 640)
         self.configure(bg=BG)
         self.cfg = load_config()
         self.engine = EffectEngine(lambda: self.cfg, self.log, self.ui_call)
@@ -163,6 +163,13 @@ class App(tk.Tk):
             foreground=[("active", ACCENT)],
             indicatorcolor=[("selected", ACCENT_DARK), ("active", HIGHLIGHT)],
         )
+        style.configure(
+            "Vertical.TScrollbar",
+            background=PANEL,
+            troughcolor=BG,
+            bordercolor=BG,
+            arrowcolor=ACCENT,
+        )
         style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(4, 6, 4, 0))
         style.configure(
             "TNotebook.Tab",
@@ -241,8 +248,11 @@ class App(tk.Tk):
         return chip, lbl
 
     def _build(self) -> None:
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
+
         head = ttk.Frame(self)
-        head.pack(fill="x", padx=20, pady=(16, 0))
+        head.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 0))
         titles = ttk.Frame(head)
         titles.pack(side="left")
         ttk.Label(titles, text="CS2 Donate Interact", style="Title.TLabel").pack(anchor="w")
@@ -264,10 +274,25 @@ class App(tk.Tk):
         self.status_da_chip.pack(side="right", padx=6)
 
         accent = tk.Frame(self, bg=STRIPE, height=2)
-        accent.pack(fill="x", padx=20, pady=(12, 4))
+        accent.grid(row=1, column=0, sticky="ew", padx=20, pady=(12, 4))
+
+        bar = ttk.Frame(self)
+        bar.grid(row=3, column=0, sticky="ew", padx=20, pady=(6, 12))
+        ttk.Button(bar, text="Сохранить настройки", style="Accent.TButton", command=self._save).pack(side="left")
+        ttk.Button(bar, text="Включить эффекты", command=self._resume).pack(side="left", padx=8)
+        ttk.Button(bar, text="Аварийный стоп (Alt+5)", command=self.engine.emergency_stop).pack(side="left", padx=(16, 8))
+        ttk.Button(bar, text="Паника: выключить всё", style="Danger.TButton", command=self._panic).pack(side="left")
+        ttk.Button(bar, text="Скопировать лог", command=self._copy_log).pack(side="right")
+        ttk.Button(bar, text="Проверить табличку", command=self._test_overlay).pack(side="right", padx=8)
+        self.btn_restart_update = ttk.Button(
+            bar,
+            text="Перезапустить с обновлением",
+            style="Accent.TButton",
+            command=self._restart_for_update,
+        )
 
         nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=20, pady=(4, 8))
+        nb.grid(row=2, column=0, sticky="nsew", padx=20, pady=(4, 4))
         self.tab_effects = ttk.Frame(nb)
         self.tab_general = ttk.Frame(nb)
         self.tab_da = ttk.Frame(nb)
@@ -283,21 +308,47 @@ class App(tk.Tk):
         self._build_da()
         self._build_keys()
         self._build_log()
+        self.bind_all("<MouseWheel>", self._on_mousewheel)
 
-        bar = ttk.Frame(self)
-        bar.pack(fill="x", padx=20, pady=(0, 16))
-        ttk.Button(bar, text="Сохранить настройки", style="Accent.TButton", command=self._save).pack(side="left")
-        ttk.Button(bar, text="Включить эффекты", command=self._resume).pack(side="left", padx=8)
-        ttk.Button(bar, text="Аварийный стоп (Alt+5)", command=self.engine.emergency_stop).pack(side="left", padx=(16, 8))
-        ttk.Button(bar, text="Паника: выключить всё", style="Danger.TButton", command=self._panic).pack(side="left")
-        ttk.Button(bar, text="Скопировать лог", command=self._copy_log).pack(side="right")
-        ttk.Button(bar, text="Проверить табличку", command=self._test_overlay).pack(side="right", padx=8)
-        self.btn_restart_update = ttk.Button(
-            bar,
-            text="Перезапустить с обновлением",
-            style="Accent.TButton",
-            command=self._restart_for_update,
-        )
+    def _scroll_area(self, parent: tk.Widget) -> tk.Frame:
+        shell = tk.Frame(parent, bg=BG)
+        shell.pack(fill="both", expand=True)
+        canvas = tk.Canvas(shell, bg=BG, highlightthickness=0, bd=0)
+        scroll = ttk.Scrollbar(shell, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg=BG)
+        window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scroll.set)
+        shell._scroll_canvas = canvas  # type: ignore[attr-defined]
+        inner._scroll_canvas = canvas  # type: ignore[attr-defined]
+        canvas._scroll_canvas = canvas  # type: ignore[attr-defined]
+
+        def inner_cfg(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all") or (0, 0, 0, 0))
+
+        def canvas_cfg(event) -> None:
+            canvas.itemconfigure(window_id, width=max(1, event.width))
+
+        inner.bind("<Configure>", inner_cfg)
+        canvas.bind("<Configure>", canvas_cfg)
+        canvas.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        return inner
+
+    def _on_mousewheel(self, event: tk.Event) -> str | None:
+        try:
+            widget = self.winfo_containing(*self.winfo_pointerxy())
+        except tk.TclError:
+            return None
+        current = widget
+        while current is not None:
+            if isinstance(current, tk.Text):
+                return None
+            canvas = getattr(current, "_scroll_canvas", None)
+            if canvas is not None:
+                canvas.yview_scroll(int(-event.delta / 120), "units")
+                return "break"
+            current = getattr(current, "master", None)
+        return None
 
     def _card(self, parent: tk.Widget) -> tk.Frame:
         outer = tk.Frame(parent, bg=BG)
@@ -415,10 +466,11 @@ class App(tk.Tk):
             text="Сумма доната запускает один эффект. «Тест»: 3 сек на переход в CS2, потом эффект.",
             style="Muted.TLabel",
         ).pack(anchor="w", pady=(10, 8))
+        body = self._scroll_area(self.tab_effects)
         self.effect_vars: dict[str, dict[str, Any]] = {}
         for effect_id in EFFECT_ORDER:
             effect = self.cfg["effects"][effect_id]
-            card = self._card(self.tab_effects)
+            card = self._card(body)
             inner = tk.Frame(card, bg=CARD)
             inner.pack(fill="x", padx=12, pady=10)
 
@@ -470,7 +522,7 @@ class App(tk.Tk):
             self.effect_vars[effect_id] = {"enabled": enabled, "amount": amount, "cooldown_sec": cooldown, **extra}
 
         mine = self.cfg["effects"]["minecraft_takeover"]
-        video_card = self._card(self.tab_effects)
+        video_card = self._card(body)
         row = tk.Frame(video_card, bg=CARD)
         row.pack(fill="x", padx=12, pady=10)
         tk.Label(row, text="Видео для 10000₽", bg=CARD, fg=FG, font=(FONT, 10)).pack(side="left")
@@ -487,7 +539,8 @@ class App(tk.Tk):
 
     def _build_general(self) -> None:
         g = self.cfg["general"]
-        grid = ttk.Frame(self.tab_general)
+        page = self._scroll_area(self.tab_general)
+        grid = ttk.Frame(page)
         grid.pack(fill="x", pady=12)
         self.enabled_var = tk.BooleanVar(value=bool(g["enabled"]))
         self.require_running = tk.BooleanVar(value=bool(g["require_cs2_running"]))
@@ -559,7 +612,7 @@ class App(tk.Tk):
         self.panic_hotkey.grid(row=7, column=2, sticky="w")
 
         ttk.Label(
-            self.tab_general,
+            page,
             text="Alt+5 снимает флешку, возвращает WASD, закрывает летсплей и чистит очередь. Ctrl+Alt+5 полностью глушит эффекты до ручного включения.",
             style="Muted.TLabel",
         ).pack(anchor="w", pady=10)
@@ -567,7 +620,7 @@ class App(tk.Tk):
         flash = self.cfg["effects"]["flash"]
         jerk = self.cfg["effects"]["mouse_jerk"]
         nade = self.cfg["effects"]["nade_and_crouch"]
-        extra = ttk.Frame(self.tab_general)
+        extra = ttk.Frame(page)
         extra.pack(fill="x", pady=8)
         ttk.Label(extra, text="Флешка: режим").grid(row=0, column=0, sticky="e", padx=8)
         self.flash_mode = ttk.Combobox(extra, values=["gamma_and_overlay", "gamma", "overlay"], state="readonly", width=22)
@@ -1304,6 +1357,10 @@ class App(tk.Tk):
     def _on_close(self) -> None:
         if hasattr(self, "_update_stop"):
             self._update_stop.set()
+        try:
+            self.unbind_all("<MouseWheel>")
+        except tk.TclError:
+            pass
         try:
             self._collect()
             save_config(self.cfg)
