@@ -18,3 +18,4 @@ assets/*.mov
 *.spec
 dist/
 build/
+.app_revision

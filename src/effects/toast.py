@@ -46,44 +46,60 @@ class ToastController:
             import tkinter as tk
 
             from src.effects.input_win import user32
+            from src.theme import ACCENT, BG, CARD, FG, FONT, FONT_TITLE, MUTED, PANEL, STRIPE
 
             win = tk.Toplevel()
             win.overrideredirect(True)
             win.attributes("-topmost", True)
             try:
-                win.attributes("-alpha", 0.96)
+                win.attributes("-alpha", 0.97)
             except tk.TclError:
                 pass
-            win.configure(bg="#16041c")
+            win.configure(bg=BG)
             screen_w = win.winfo_screenwidth()
             screen_h = win.winfo_screenheight()
-            width = max(640, screen_w - 48)
-            height = 118
-            x = max(16, (screen_w - width) // 2)
-            y = max(16, screen_h - height - 36)
+            width = max(720, min(screen_w - 64, 1480))
+            height = 104
+            x = max(24, (screen_w - width) // 2)
+            y = max(16, screen_h - height - 40)
             win.geometry(f"{width}x{height}+{x}+{y}")
 
-            inner = tk.Frame(win, bg="#3b1760", highlightbackground="#e9d5ff", highlightthickness=3)
-            inner.pack(fill="both", expand=True, padx=3, pady=3)
+            shell = tk.Frame(win, bg=BG)
+            shell.pack(fill="both", expand=True)
+            tk.Frame(shell, bg=STRIPE, height=3).pack(fill="x")
+            body = tk.Frame(shell, bg=PANEL)
+            body.pack(fill="both", expand=True)
+
+            amount_box = tk.Frame(body, bg=CARD, width=168)
+            amount_box.pack(side="left", fill="y")
+            amount_box.pack_propagate(False)
             tk.Label(
-                inner,
+                amount_box,
+                text=amount_text or "донат",
+                bg=CARD,
+                fg=ACCENT,
+                font=(FONT_TITLE, 20),
+                wraplength=150,
+            ).pack(expand=True)
+
+            text_box = tk.Frame(body, bg=PANEL)
+            text_box.pack(side="left", fill="both", expand=True, padx=22)
+            tk.Label(
+                text_box,
                 text=username or "Аноним",
-                bg="#3b1760",
-                fg="#ffffff",
-                font=("Segoe UI", 22, "bold"),
-                anchor="center",
-            ).pack(fill="x", padx=20, pady=(14, 0))
-            sub = effect_title or "Донат получен"
-            if amount_text:
-                sub = f"{sub}   ·   {amount_text}"
+                bg=PANEL,
+                fg=FG,
+                font=(FONT_TITLE, 22),
+                anchor="w",
+            ).pack(fill="x", pady=(14, 0))
             tk.Label(
-                inner,
-                text=sub,
-                bg="#3b1760",
-                fg="#f3e8ff",
-                font=("Segoe UI", 14, "bold"),
-                anchor="center",
-            ).pack(fill="x", padx=20, pady=(2, 14))
+                text_box,
+                text=effect_title or "Донат получен",
+                bg=PANEL,
+                fg=MUTED,
+                font=(FONT, 13),
+                anchor="w",
+            ).pack(fill="x", pady=(0, 14))
 
             win.update_idletasks()
             hwnd = int(win.winfo_id())

@@ -1,5 +1,5 @@
-from src.app import run
+from src.updater import bootstrap
 
 
 if __name__ == "__main__":
-    run()
+    bootstrap()

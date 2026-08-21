@@ -25,6 +25,7 @@ DEFAULTS: dict[str, Any] = {
         "currency": "RUB",
         "kill_switch": "alt+5",
         "panic_hotkey": "ctrl+alt+5",
+        "auto_update": True,
     },
     "overlay": {
         "enabled": True,

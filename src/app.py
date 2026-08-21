@@ -16,30 +16,51 @@ from src.donations.trula import TrulaClient
 from src.donations.webhook import WebhookServer
 from src.effects.cs2 import is_cs2_running
 from src.effects.engine import EffectEngine
+from src.updater import CHECK_EVERY_SEC, check_and_apply, restart_process
+from src.theme import (
+    ACCENT,
+    ACCENT_DARK,
+    BAD,
+    BG,
+    BUTTON,
+    BUTTON_HOVER,
+    CARD,
+    CHIP_BG,
+    CHIP_FILL,
+    CHIP_LINE,
+    DANGER,
+    DANGER_HOVER,
+    ENTRY_BG,
+    FG,
+    FONT,
+    FONT_MONO,
+    FONT_TITLE,
+    HIGHLIGHT,
+    MUTED,
+    OK,
+    PANEL,
+    STRIPE,
+    WARN,
+    WHITE,
+)
 
-
-BG = "#120815"
-PANEL = "#1c1228"
-CARD = "#27183a"
-FG = "#f4eefe"
-MUTED = "#b7a6cc"
-ACCENT = "#c4b5fd"
-ACCENT_DARK = "#7c5cbf"
-BUTTON = "#3a2458"
-BUTTON_HOVER = "#4e3174"
-OK = "#7ee0b8"
-BAD = "#ff7b9c"
-WARN = "#f5d06f"
-ENTRY_BG = "#0e0816"
-HIGHLIGHT = "#8b6cc9"
+EFFECT_HINTS = {
+    "flash": "белый экран",
+    "drop_weapon": "клавиша дропа",
+    "mouse_jerk": "рывок мыши",
+    "block_wasd": "ход отключается",
+    "nade_and_crouch": "HE + присед",
+    "kill_cs2": "закрыть игру",
+    "minecraft_takeover": "ролик на весь экран",
+}
 
 
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("CS2 Donate Interact")
-        self.geometry("1100x720")
-        self.minsize(980, 640)
+        self.geometry("1120x740")
+        self.minsize(1000, 660)
         self.configure(bg=BG)
         self.cfg = load_config()
         self.engine = EffectEngine(lambda: self.cfg, self.log, self.ui_call)
@@ -50,9 +71,11 @@ class App(tk.Tk):
         self._quiet_log_until: dict[str, float] = {}
         self._build_style()
         self._build()
+        self._dark_titlebar()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.engine.start()
         self._start_services()
+        self._start_updater()
         self.after(1000, self._tick)
 
     def ui_call(self, fn) -> None:
@@ -85,48 +108,81 @@ class App(tk.Tk):
         else:
             self.after(0, append)
 
+    def _dark_titlebar(self) -> None:
+        try:
+            import ctypes
+
+            self.update_idletasks()
+            hwnd = int(self.winfo_id())
+            parent = ctypes.windll.user32.GetParent(hwnd)
+            if parent:
+                hwnd = parent
+            value = ctypes.c_int(1)
+            dwm = ctypes.windll.dwmapi
+            for attr in (20, 19):
+                dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(value), 4)
+        except Exception:
+            pass
+
     def _build_style(self) -> None:
         style = ttk.Style(self)
         style.theme_use("clam")
         style.configure("TFrame", background=BG)
-        style.configure("Card.TFrame", background=PANEL)
-        style.configure("TLabel", background=BG, foreground=FG, font=("Segoe UI", 10))
-        style.configure("Muted.TLabel", background=BG, foreground=MUTED, font=("Segoe UI", 9))
-        style.configure("Title.TLabel", background=BG, foreground=ACCENT, font=("Segoe UI Semibold", 18))
-        style.configure("Card.TLabel", background=PANEL, foreground=FG, font=("Segoe UI", 10))
-        style.configure("CardMuted.TLabel", background=PANEL, foreground=MUTED, font=("Segoe UI", 9))
+        style.configure("Card.TFrame", background=CARD)
+        style.configure("TLabel", background=BG, foreground=FG, font=(FONT, 10))
+        style.configure("Muted.TLabel", background=BG, foreground=MUTED, font=(FONT, 9))
+        style.configure("Title.TLabel", background=BG, foreground=WHITE, font=(FONT_TITLE, 18))
+        style.configure("Sub.TLabel", background=BG, foreground=ACCENT, font=(FONT, 9))
+        style.configure("Card.TLabel", background=CARD, foreground=FG, font=(FONT, 10))
+        style.configure("CardMuted.TLabel", background=CARD, foreground=MUTED, font=(FONT, 9))
         style.configure(
             "TCheckbutton",
-            background=PANEL,
+            background=BG,
             foreground=FG,
-            font=("Segoe UI", 10),
+            font=(FONT, 10),
             indicatorcolor=ENTRY_BG,
             indicatorrelief="flat",
         )
         style.map(
             "TCheckbutton",
-            background=[("active", CARD)],
+            background=[("active", PANEL)],
             foreground=[("active", ACCENT)],
             indicatorcolor=[("selected", ACCENT_DARK), ("active", HIGHLIGHT)],
         )
-        style.configure("TNotebook", background=BG, borderwidth=0)
+        style.configure(
+            "Card.TCheckbutton",
+            background=CARD,
+            foreground=FG,
+            font=(FONT, 10),
+            indicatorcolor=ENTRY_BG,
+            indicatorrelief="flat",
+        )
+        style.map(
+            "Card.TCheckbutton",
+            background=[("active", PANEL)],
+            foreground=[("active", ACCENT)],
+            indicatorcolor=[("selected", ACCENT_DARK), ("active", HIGHLIGHT)],
+        )
+        style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(4, 6, 4, 0))
         style.configure(
             "TNotebook.Tab",
-            background=CARD,
+            background=PANEL,
             foreground=MUTED,
-            padding=(16, 9),
-            font=("Segoe UI", 10),
+            padding=(18, 10),
+            font=(FONT, 10),
             borderwidth=0,
+            lightcolor=BG,
+            darkcolor=BG,
         )
         style.map(
             "TNotebook.Tab",
             background=[("selected", ACCENT_DARK), ("active", BUTTON_HOVER)],
-            foreground=[("selected", "#f8f4ff"), ("active", FG)],
+            foreground=[("selected", WHITE), ("active", FG)],
         )
         style.configure(
             "TButton",
-            font=("Segoe UI", 9),
-            padding=8,
+            font=(FONT, 9),
+            padding=(10, 8),
             background=BUTTON,
             foreground=FG,
             borderwidth=0,
@@ -136,16 +192,24 @@ class App(tk.Tk):
         style.map(
             "TButton",
             background=[("active", BUTTON_HOVER), ("pressed", ACCENT_DARK)],
-            foreground=[("active", "#ffffff")],
+            foreground=[("active", WHITE)],
         )
         style.configure(
             "Accent.TButton",
-            font=("Segoe UI Semibold", 10),
-            padding=8,
+            font=(FONT_TITLE, 10),
+            padding=(12, 8),
             background=ACCENT_DARK,
-            foreground="#f8f4ff",
+            foreground=WHITE,
         )
         style.map("Accent.TButton", background=[("active", HIGHLIGHT), ("pressed", BUTTON)])
+        style.configure(
+            "Danger.TButton",
+            font=(FONT, 9),
+            padding=(10, 8),
+            background=DANGER,
+            foreground=WHITE,
+        )
+        style.map("Danger.TButton", background=[("active", DANGER_HOVER), ("pressed", "#7f1d1d")])
         style.configure("TEntry", fieldbackground=ENTRY_BG, foreground=FG, insertcolor=FG)
         style.configure(
             "TCombobox",
@@ -164,26 +228,46 @@ class App(tk.Tk):
         self.option_add("*TCombobox*Listbox.background", ENTRY_BG)
         self.option_add("*TCombobox*Listbox.foreground", FG)
         self.option_add("*TCombobox*Listbox.selectBackground", ACCENT_DARK)
-        self.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+        self.option_add("*TCombobox*Listbox.selectForeground", WHITE)
+        self.option_add("*Menu.background", PANEL)
+        self.option_add("*Menu.foreground", FG)
+        self.option_add("*Menu.activeBackground", ACCENT_DARK)
+        self.option_add("*Menu.activeForeground", WHITE)
+
+    def _chip(self, parent: tk.Widget, text: str) -> tuple[tk.Frame, tk.Label]:
+        chip = tk.Frame(parent, bg=CHIP_BG, highlightbackground=CHIP_LINE, highlightthickness=1)
+        lbl = tk.Label(chip, text=text, bg=CHIP_BG, fg=BAD, font=(FONT, 9, "bold"), padx=11, pady=5)
+        lbl.pack()
+        return chip, lbl
 
     def _build(self) -> None:
         head = ttk.Frame(self)
-        head.pack(fill="x", padx=18, pady=(16, 8))
-        ttk.Label(head, text="CS2 Donate Interact", style="Title.TLabel").pack(side="left")
-        ttk.Label(head, text="  донат-интерактив", style="Muted.TLabel").pack(side="left", pady=(6, 0))
-        self.status_da = tk.Label(head, text="DA: нет", bg=BG, fg=BAD, font=("Segoe UI", 9, "bold"))
-        self.status_dp = tk.Label(head, text="DP: нет", bg=BG, fg=BAD, font=("Segoe UI", 9, "bold"))
-        self.status_trula = tk.Label(head, text="Trula: нет", bg=BG, fg=BAD, font=("Segoe UI", 9, "bold"))
-        self.status_cs2 = tk.Label(head, text="CS2: —", bg=BG, fg=MUTED, font=("Segoe UI", 9, "bold"))
-        self.status_sys = tk.Label(head, text="эффекты: вкл", bg=BG, fg=OK, font=("Segoe UI", 9, "bold"))
-        self.status_sys.pack(side="right", padx=8)
-        self.status_cs2.pack(side="right", padx=8)
-        self.status_trula.pack(side="right", padx=8)
-        self.status_dp.pack(side="right", padx=8)
-        self.status_da.pack(side="right", padx=8)
+        head.pack(fill="x", padx=20, pady=(16, 0))
+        titles = ttk.Frame(head)
+        titles.pack(side="left")
+        ttk.Label(titles, text="CS2 Donate Interact", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(titles, text="донаты → эффекты в игре", style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
+        chips = ttk.Frame(head)
+        chips.pack(side="right")
+        self.status_upd_chip, self.status_upd = self._chip(chips, "GH: …")
+        self.status_sys_chip, self.status_sys = self._chip(chips, "эффекты: вкл")
+        self.status_cs2_chip, self.status_cs2 = self._chip(chips, "CS2: —")
+        self.status_trula_chip, self.status_trula = self._chip(chips, "Trula: нет")
+        self.status_dp_chip, self.status_dp = self._chip(chips, "DP: нет")
+        self.status_da_chip, self.status_da = self._chip(chips, "DA: нет")
+        self.status_sys.configure(fg=OK)
+        self.status_upd_chip.pack(side="right", padx=(6, 0))
+        self.status_sys_chip.pack(side="right", padx=6)
+        self.status_cs2_chip.pack(side="right", padx=6)
+        self.status_trula_chip.pack(side="right", padx=6)
+        self.status_dp_chip.pack(side="right", padx=6)
+        self.status_da_chip.pack(side="right", padx=6)
+
+        accent = tk.Frame(self, bg=STRIPE, height=2)
+        accent.pack(fill="x", padx=20, pady=(12, 4))
 
         nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=18, pady=8)
+        nb.pack(fill="both", expand=True, padx=20, pady=(4, 8))
         self.tab_effects = ttk.Frame(nb)
         self.tab_general = ttk.Frame(nb)
         self.tab_da = ttk.Frame(nb)
@@ -201,20 +285,30 @@ class App(tk.Tk):
         self._build_log()
 
         bar = ttk.Frame(self)
-        bar.pack(fill="x", padx=18, pady=(0, 14))
+        bar.pack(fill="x", padx=20, pady=(0, 16))
         ttk.Button(bar, text="Сохранить настройки", style="Accent.TButton", command=self._save).pack(side="left")
-        ttk.Button(bar, text="Аварийный стоп (Alt+5)", command=self.engine.emergency_stop).pack(side="left", padx=8)
-        ttk.Button(bar, text="Паника: выключить всё", command=self._panic).pack(side="left")
         ttk.Button(bar, text="Включить эффекты", command=self._resume).pack(side="left", padx=8)
+        ttk.Button(bar, text="Аварийный стоп (Alt+5)", command=self.engine.emergency_stop).pack(side="left", padx=(16, 8))
+        ttk.Button(bar, text="Паника: выключить всё", style="Danger.TButton", command=self._panic).pack(side="left")
         ttk.Button(bar, text="Скопировать лог", command=self._copy_log).pack(side="right")
         ttk.Button(bar, text="Проверить табличку", command=self._test_overlay).pack(side="right", padx=8)
+        self.btn_restart_update = ttk.Button(
+            bar,
+            text="Перезапустить с обновлением",
+            style="Accent.TButton",
+            command=self._restart_for_update,
+        )
 
-    def _card(self, parent: tk.Widget) -> ttk.Frame:
-        frame = ttk.Frame(parent, style="Card.TFrame")
-        frame.pack(fill="x", pady=6)
-        return frame
+    def _card(self, parent: tk.Widget) -> tk.Frame:
+        outer = tk.Frame(parent, bg=BG)
+        outer.pack(fill="x", pady=5)
+        stripe = tk.Frame(outer, bg=STRIPE, width=3)
+        stripe.pack(side="left", fill="y")
+        inner = tk.Frame(outer, bg=CARD)
+        inner.pack(side="left", fill="both", expand=True)
+        return inner
 
-    def _entry(self, parent: tk.Widget, width: int = 10) -> tk.Entry:
+    def _entry(self, parent: tk.Widget, width: int = 10, secret: bool = False) -> tk.Entry:
         entry = tk.Entry(
             parent,
             width=width,
@@ -223,9 +317,11 @@ class App(tk.Tk):
             insertbackground=ACCENT,
             relief="flat",
             highlightthickness=1,
-            highlightbackground=HIGHLIGHT,
+            highlightbackground=CHIP_LINE,
             highlightcolor=ACCENT,
             exportselection=False,
+            font=(FONT, 10),
+            show="•" if secret else "",
         )
         self._bind_clipboard(entry)
         return entry
@@ -278,7 +374,15 @@ class App(tk.Tk):
         entry.xview_moveto(1)
 
     def _entry_menu(self, event: tk.Event, entry: tk.Entry) -> None:
-        menu = tk.Menu(self, tearoff=0)
+        menu = tk.Menu(
+            self,
+            tearoff=0,
+            bg=PANEL,
+            fg=FG,
+            activebackground=ACCENT_DARK,
+            activeforeground=WHITE,
+            bd=0,
+        )
         menu.add_command(label="Вставить", command=lambda: self._paste_into(entry))
         menu.add_command(label="Копировать", command=lambda: self._copy_from(entry))
         menu.add_command(label="Вырезать", command=lambda: self._cut_from(entry))
@@ -310,55 +414,73 @@ class App(tk.Tk):
             self.tab_effects,
             text="Сумма доната запускает один эффект. «Тест»: 3 сек на переход в CS2, потом эффект.",
             style="Muted.TLabel",
-        ).pack(anchor="w", pady=(8, 10))
+        ).pack(anchor="w", pady=(10, 8))
         self.effect_vars: dict[str, dict[str, Any]] = {}
         for effect_id in EFFECT_ORDER:
             effect = self.cfg["effects"][effect_id]
             card = self._card(self.tab_effects)
-            inner = ttk.Frame(card, style="Card.TFrame")
+            inner = tk.Frame(card, bg=CARD)
             inner.pack(fill="x", padx=12, pady=10)
-            enabled = tk.BooleanVar(value=bool(effect.get("enabled", True)))
-            ttk.Checkbutton(inner, text=EFFECT_TITLES[effect_id], variable=enabled).pack(side="left")
-            ttk.Label(inner, text="сумма", style="CardMuted.TLabel").pack(side="left", padx=(16, 4))
-            amount = self._entry(inner, 8)
+
+            amount = self._entry(inner, 7)
             amount.insert(0, str(effect.get("amount", 0)))
-            amount.pack(side="left")
-            ttk.Label(inner, text="кд, сек", style="CardMuted.TLabel").pack(side="left", padx=(12, 4))
-            cooldown = self._entry(inner, 6)
+            amount.configure(font=(FONT_TITLE, 14), fg=ACCENT, justify="center")
+            amount.pack(side="left", padx=(0, 4), ipady=4)
+            tk.Label(inner, text="₽", bg=CARD, fg=MUTED, font=(FONT, 11)).pack(side="left", padx=(0, 14))
+
+            names = tk.Frame(inner, bg=CARD)
+            names.pack(side="left", fill="x", expand=True)
+            tk.Label(
+                names,
+                text=EFFECT_TITLES[effect_id],
+                bg=CARD,
+                fg=FG,
+                font=(FONT_TITLE, 11),
+                anchor="w",
+            ).pack(fill="x")
+            tk.Label(
+                names,
+                text=EFFECT_HINTS.get(effect_id, ""),
+                bg=CARD,
+                fg=MUTED,
+                font=(FONT, 8),
+                anchor="w",
+            ).pack(fill="x")
+
+            extra: dict[str, tk.Entry] = {}
+            controls = tk.Frame(inner, bg=CARD)
+            controls.pack(side="right")
+            enabled = tk.BooleanVar(value=bool(effect.get("enabled", True)))
+            ttk.Checkbutton(controls, text="вкл", variable=enabled, style="Card.TCheckbutton").pack(side="left", padx=(0, 8))
+            tk.Label(controls, text="кд", bg=CARD, fg=MUTED, font=(FONT, 8)).pack(side="left", padx=(0, 4))
+            cooldown = self._entry(controls, 5)
             cooldown.insert(0, str(effect.get("cooldown_sec", 0)))
             cooldown.pack(side="left")
-            extra: dict[str, tk.Entry] = {}
-            if effect_id == "flash":
-                ttk.Label(inner, text="длительность", style="CardMuted.TLabel").pack(side="left", padx=(12, 4))
-                duration = self._entry(inner, 6)
-                duration.insert(0, str(effect.get("duration_sec", 8)))
-                duration.pack(side="left")
+            if effect_id in {"flash", "block_wasd"}:
+                tk.Label(controls, text="сек", bg=CARD, fg=MUTED, font=(FONT, 8)).pack(side="left", padx=(10, 4))
+                duration = self._entry(controls, 5)
+                duration.insert(0, str(effect.get("duration_sec", 8 if effect_id == "flash" else 10)))
                 extra["duration_sec"] = duration
-            if effect_id == "block_wasd":
-                ttk.Label(inner, text="длительность", style="CardMuted.TLabel").pack(side="left", padx=(12, 4))
-                duration = self._entry(inner, 6)
-                duration.insert(0, str(effect.get("duration_sec", 10)))
                 duration.pack(side="left")
-                extra["duration_sec"] = duration
             ttk.Button(
-                inner,
+                controls,
                 text="Тест",
                 command=lambda eid=effect_id: self.engine.enqueue_effect(eid, reason="тест"),
-            ).pack(side="right")
+            ).pack(side="left", padx=(10, 0))
             self.effect_vars[effect_id] = {"enabled": enabled, "amount": amount, "cooldown_sec": cooldown, **extra}
 
         mine = self.cfg["effects"]["minecraft_takeover"]
         video_card = self._card(self.tab_effects)
-        row = ttk.Frame(video_card, style="Card.TFrame")
+        row = tk.Frame(video_card, bg=CARD)
         row.pack(fill="x", padx=12, pady=10)
-        ttk.Label(row, text="Видео для 10000₽", style="Card.TLabel").pack(side="left")
+        tk.Label(row, text="Видео для 10000₽", bg=CARD, fg=FG, font=(FONT, 10)).pack(side="left")
         self.video_path = self._entry(row, 48)
         self.video_path.insert(0, str(mine.get("video_path") or ""))
         self.video_path.pack(side="left", padx=8, fill="x", expand=True)
         ttk.Button(row, text="Файл…", command=self._pick_video).pack(side="left")
-        row2 = ttk.Frame(video_card, style="Card.TFrame")
+        row2 = tk.Frame(video_card, bg=CARD)
         row2.pack(fill="x", padx=12, pady=(0, 10))
-        ttk.Label(row2, text="или YouTube URL (нужен mpv)", style="CardMuted.TLabel").pack(side="left")
+        tk.Label(row2, text="или YouTube URL (нужен mpv)", bg=CARD, fg=MUTED, font=(FONT, 9)).pack(side="left")
         self.youtube_url = self._entry(row2, 48)
         self.youtube_url.insert(0, str(mine.get("youtube_url") or ""))
         self.youtube_url.pack(side="left", padx=8, fill="x", expand=True)
@@ -380,6 +502,9 @@ class App(tk.Tk):
         ttk.Checkbutton(grid, text="Табличка на каждый донат", variable=self.overlay_enabled).grid(row=3, column=0, sticky="w", pady=4)
         ttk.Checkbutton(grid, text="Звук при донате", variable=self.overlay_beep).grid(row=4, column=0, sticky="w", pady=4)
         ttk.Checkbutton(grid, text="Короткая вспышка, если табличка под игрой", variable=self.overlay_ping).grid(row=5, column=0, sticky="w", pady=4)
+        self.auto_update = tk.BooleanVar(value=bool(g.get("auto_update", True)))
+        ttk.Checkbutton(grid, text="Автообновление с GitHub", variable=self.auto_update).grid(row=6, column=0, sticky="w", pady=4)
+        ttk.Button(grid, text="Проверить сейчас", command=self._check_update_now).grid(row=7, column=0, sticky="w", pady=6)
 
         ttk.Label(grid, text="Режим суммы").grid(row=0, column=1, sticky="e", padx=8)
         self.amount_mode = ttk.Combobox(grid, values=["exact", "threshold"], state="readonly", width=14)
@@ -474,42 +599,42 @@ class App(tk.Tk):
         self._build_trula_fields(tab_trula)
 
     def _build_how(self, parent: tk.Widget) -> None:
-        dash = tk.Frame(parent, bg=PANEL, highlightbackground=HIGHLIGHT, highlightthickness=1)
+        dash = tk.Frame(parent, bg=CARD, highlightbackground=CHIP_LINE, highlightthickness=1)
         dash.pack(fill="x", pady=(8, 10), padx=2)
         tk.Label(
             dash,
             text="Живой статус. Зелёный = донаты реально могут прийти. «Токен вставлен» само по себе ничего не значит.",
-            bg=PANEL,
+            bg=CARD,
             fg=MUTED,
-            font=("Segoe UI", 9),
+            font=(FONT, 9),
             wraplength=980,
             justify="left",
-        ).pack(anchor="w", padx=12, pady=(10, 6))
-        row = tk.Frame(dash, bg=PANEL)
-        row.pack(fill="x", padx=12, pady=(0, 8))
-        self.dash_da = tk.Label(row, text="DonationAlerts: не привязан", bg=PANEL, fg=BAD, font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
-        self.dash_dp = tk.Label(row, text="DonatePay: не привязан", bg=PANEL, fg=BAD, font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
-        self.dash_trula = tk.Label(row, text="Trula: не привязана", bg=PANEL, fg=BAD, font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
+        ).pack(anchor="w", padx=14, pady=(12, 6))
+        row = tk.Frame(dash, bg=CARD)
+        row.pack(fill="x", padx=14, pady=(0, 8))
+        self.dash_da = tk.Label(row, text="DonationAlerts: не привязан", bg=CARD, fg=BAD, font=(FONT, 10, "bold"), anchor="w", justify="left")
+        self.dash_dp = tk.Label(row, text="DonatePay: не привязан", bg=CARD, fg=BAD, font=(FONT, 10, "bold"), anchor="w", justify="left")
+        self.dash_trula = tk.Label(row, text="Trula: не привязана", bg=CARD, fg=BAD, font=(FONT, 10, "bold"), anchor="w", justify="left")
         self.dash_da.pack(fill="x")
         self.dash_dp.pack(fill="x")
         self.dash_trula.pack(fill="x")
-        self.dash_da_d = tk.Label(dash, text="", bg=PANEL, fg=MUTED, font=("Segoe UI", 9), anchor="w", wraplength=980, justify="left")
-        self.dash_dp_d = tk.Label(dash, text="", bg=PANEL, fg=MUTED, font=("Segoe UI", 9), anchor="w", wraplength=980, justify="left")
-        self.dash_trula_d = tk.Label(dash, text="", bg=PANEL, fg=MUTED, font=("Segoe UI", 9), anchor="w", wraplength=980, justify="left")
-        self.dash_da_d.pack(fill="x", padx=12)
-        self.dash_dp_d.pack(fill="x", padx=12)
-        self.dash_trula_d.pack(fill="x", padx=12)
+        self.dash_da_d = tk.Label(dash, text="", bg=CARD, fg=MUTED, font=(FONT, 9), anchor="w", wraplength=980, justify="left")
+        self.dash_dp_d = tk.Label(dash, text="", bg=CARD, fg=MUTED, font=(FONT, 9), anchor="w", wraplength=980, justify="left")
+        self.dash_trula_d = tk.Label(dash, text="", bg=CARD, fg=MUTED, font=(FONT, 9), anchor="w", wraplength=980, justify="left")
+        self.dash_da_d.pack(fill="x", padx=14)
+        self.dash_dp_d.pack(fill="x", padx=14)
+        self.dash_trula_d.pack(fill="x", padx=14)
         self.last_don_lbl = tk.Label(
             dash,
             text="Последний донат, который увидело приложение: ещё не было",
-            bg=PANEL,
+            bg=CARD,
             fg=ACCENT,
-            font=("Segoe UI", 10, "bold"),
+            font=(FONT, 10, "bold"),
             anchor="w",
             wraplength=980,
             justify="left",
         )
-        self.last_don_lbl.pack(fill="x", padx=12, pady=(8, 12))
+        self.last_don_lbl.pack(fill="x", padx=14, pady=(8, 14))
 
         lines = [
             "1. Нажми «Открыть кабинет», скопируй токен/ссылку.",
@@ -545,7 +670,7 @@ class App(tk.Tk):
         ttk.Label(box, text="Секретный токен или ссылка виджета").grid(row=3, column=0, sticky="e", padx=8, pady=6)
         da_wrap = ttk.Frame(box)
         da_wrap.grid(row=3, column=1, sticky="we", pady=6)
-        self.da_widget = self._entry(da_wrap, 64)
+        self.da_widget = self._entry(da_wrap, 64, secret=True)
         self.da_widget.insert(0, da.get("widget_token", ""))
         self.da_widget.pack(side="left", fill="x", expand=True)
         self._paste_button(da_wrap, self.da_widget).pack(side="left", padx=(8, 0))
@@ -555,7 +680,7 @@ class App(tk.Tk):
         ttk.Label(box, text="Access token").grid(row=6, column=0, sticky="e", padx=8, pady=4)
         da_token_wrap = ttk.Frame(box)
         da_token_wrap.grid(row=6, column=1, sticky="we", pady=4)
-        self.da_token = self._entry(da_token_wrap, 64)
+        self.da_token = self._entry(da_token_wrap, 64, secret=True)
         self.da_token.insert(0, da.get("access_token", ""))
         self.da_token.pack(side="left", fill="x", expand=True)
         self._paste_button(da_token_wrap, self.da_token).pack(side="left", padx=(8, 0))
@@ -564,7 +689,7 @@ class App(tk.Tk):
         self.da_client.insert(0, da.get("client_id", ""))
         self.da_client.grid(row=7, column=1, sticky="w", pady=4)
         ttk.Label(box, text="Client secret").grid(row=8, column=0, sticky="e", padx=8, pady=4)
-        self.da_secret = self._entry(box, 48)
+        self.da_secret = self._entry(box, 48, secret=True)
         self.da_secret.insert(0, da.get("client_secret", ""))
         self.da_secret.grid(row=8, column=1, sticky="we", pady=4)
         ttk.Label(box, text="Режим API").grid(row=9, column=0, sticky="e", padx=8, pady=4)
@@ -587,14 +712,14 @@ class App(tk.Tk):
         ttk.Label(box, text="API-ключ").grid(row=4, column=0, sticky="e", padx=8, pady=6)
         dp_wrap = ttk.Frame(box)
         dp_wrap.grid(row=4, column=1, sticky="we", pady=6)
-        self.dp_token = self._entry(dp_wrap, 64)
+        self.dp_token = self._entry(dp_wrap, 64, secret=True)
         self.dp_token.insert(0, dp.get("api_token", ""))
         self.dp_token.pack(side="left", fill="x", expand=True)
         self._paste_button(dp_wrap, self.dp_token).pack(side="left", padx=(8, 0))
         ttk.Label(box, text="Ссылка виджета оповещений").grid(row=5, column=0, sticky="e", padx=8, pady=6)
         dp_w_wrap = ttk.Frame(box)
         dp_w_wrap.grid(row=5, column=1, sticky="we", pady=6)
-        self.dp_widget = self._entry(dp_w_wrap, 64)
+        self.dp_widget = self._entry(dp_w_wrap, 64, secret=True)
         self.dp_widget.insert(0, dp.get("widget_token", ""))
         self.dp_widget.pack(side="left", fill="x", expand=True)
         self._paste_button(dp_w_wrap, self.dp_widget).pack(side="left", padx=(8, 0))
@@ -618,7 +743,7 @@ class App(tk.Tk):
         ttk.Label(box, text="Ссылка виджета или токен").grid(row=4, column=0, sticky="e", padx=8, pady=6)
         trula_wrap = ttk.Frame(box)
         trula_wrap.grid(row=4, column=1, sticky="we", pady=6)
-        self.trula_widget = self._entry(trula_wrap, 64)
+        self.trula_widget = self._entry(trula_wrap, 64, secret=True)
         self.trula_widget.insert(0, trula.get("widget_url", ""))
         self.trula_widget.pack(side="left", fill="x", expand=True)
         self._paste_button(trula_wrap, self.trula_widget).pack(side="left", padx=(8, 0))
@@ -674,21 +799,24 @@ class App(tk.Tk):
         self.log_box = tk.Text(
             self.tab_log,
             bg=ENTRY_BG,
-            fg="#e4d7f5",
+            fg="#ddd6fe",
             insertbackground=ACCENT,
             relief="flat",
             state="disabled",
-            font=("Consolas", 10),
+            font=(FONT_MONO, 10),
             highlightthickness=1,
-            highlightbackground=HIGHLIGHT,
+            highlightbackground=CHIP_LINE,
             selectbackground=ACCENT_DARK,
-            selectforeground="#ffffff",
+            selectforeground=WHITE,
+            padx=10,
+            pady=8,
         )
         self.log_box.pack(fill="both", expand=True, pady=8)
         self.log("Приложение запущено. Дроп/мышь/граната работают только если CS2 в фокусе.")
         self.log("Для клавиш в CS2 запусти run-admin.bat. Игра — «Во весь экран в окне», не эксклюзивный полный экран.")
         self.log("Живой донат: зелёный статус «подключено», потом тест 100₽ в кабинете. В логе должно быть «приложение увидело донат».")
         self.log(f"Файл лога: {LOG_PATH}")
+        self.log("Автообновление: при старте и раз в 45 мин смотрит GitHub. Токены и видео не затирает. На стриме само окно не закрывает.")
 
     def _collect(self) -> None:
         self.cfg["general"]["enabled"] = self.enabled_var.get()
@@ -701,6 +829,7 @@ class App(tk.Tk):
         self.cfg["general"]["max_queue"] = int(self.max_queue.get() or 5)
         self.cfg["general"]["kill_switch"] = self.kill_switch.get().strip() or "alt+5"
         self.cfg["general"]["panic_hotkey"] = self.panic_hotkey.get().strip() or "ctrl+alt+5"
+        self.cfg["general"]["auto_update"] = self.auto_update.get() if hasattr(self, "auto_update") else True
         self.cfg["overlay"]["enabled"] = self.overlay_enabled.get() if hasattr(self, "overlay_enabled") else True
         self.cfg["overlay"]["beep"] = self.overlay_beep.get() if hasattr(self, "overlay_beep") else True
         self.cfg["overlay"]["ping_flash"] = self.overlay_ping.get() if hasattr(self, "overlay_ping") else True
@@ -987,13 +1116,24 @@ class App(tk.Tk):
         self.cfg["general"]["enabled"] = True
         self.log("Эффекты снова включены.")
 
-    def _paint_link(self, head_lbl: tk.Label, dash_lbl: tk.Label | None, dash_detail: tk.Label | None, client, short: str) -> None:
+    def _paint_link(
+        self,
+        head_lbl: tk.Label,
+        chip: tk.Frame | None,
+        dash_lbl: tk.Label | None,
+        dash_detail: tk.Label | None,
+        client,
+        short: str,
+    ) -> None:
         colors = {"off": BAD, "wait": WARN, "live": OK, "bad": BAD}
         words = {"off": "нет", "wait": "подключаюсь", "live": "подключено", "bad": "ошибка"}
         state = getattr(getattr(client, "link", None), "state", "off")
         detail = getattr(getattr(client, "link", None), "detail", "")
         color = colors.get(state, MUTED)
-        head_lbl.configure(text=f"{short}: {words.get(state, state)}", fg=color)
+        fill = CHIP_FILL.get(state, CHIP_BG)
+        head_lbl.configure(text=f"{short}: {words.get(state, state)}", fg=color, bg=fill)
+        if chip is not None:
+            chip.configure(bg=fill)
         if dash_lbl is not None:
             dash_lbl.configure(text=client.link.label(), fg=color)
         if dash_detail is not None:
@@ -1002,19 +1142,157 @@ class App(tk.Tk):
 
     def _tick(self) -> None:
         running = is_cs2_running(self.cfg["cs2"]["process_name"])
-        self.status_cs2.configure(text="CS2: запущена" if running else "CS2: нет", fg=OK if running else MUTED)
-        self._paint_link(self.status_da, getattr(self, "dash_da", None), getattr(self, "dash_da_d", None), self.da, "DA")
-        self._paint_link(self.status_dp, getattr(self, "dash_dp", None), getattr(self, "dash_dp_d", None), self.dp, "DP")
-        self._paint_link(self.status_trula, getattr(self, "dash_trula", None), getattr(self, "dash_trula_d", None), self.trula, "Trula")
+        cs2_fill = CHIP_FILL["live"] if running else CHIP_BG
+        self.status_cs2.configure(
+            text="CS2: запущена" if running else "CS2: нет",
+            fg=OK if running else MUTED,
+            bg=cs2_fill,
+        )
+        self.status_cs2_chip.configure(bg=cs2_fill)
+        self._paint_link(
+            self.status_da,
+            self.status_da_chip,
+            getattr(self, "dash_da", None),
+            getattr(self, "dash_da_d", None),
+            self.da,
+            "DA",
+        )
+        self._paint_link(
+            self.status_dp,
+            self.status_dp_chip,
+            getattr(self, "dash_dp", None),
+            getattr(self, "dash_dp_d", None),
+            self.dp,
+            "DP",
+        )
+        self._paint_link(
+            self.status_trula,
+            self.status_trula_chip,
+            getattr(self, "dash_trula", None),
+            getattr(self, "dash_trula_d", None),
+            self.trula,
+            "Trula",
+        )
         if self.engine.paused or not self.cfg["general"]["enabled"]:
-            self.status_sys.configure(text="эффекты: выкл", fg=BAD)
+            fill = CHIP_FILL["bad"]
+            self.status_sys.configure(text="эффекты: выкл", fg=BAD, bg=fill)
+            self.status_sys_chip.configure(bg=fill)
         elif self.engine.busy:
-            self.status_sys.configure(text=f"эффект: {EFFECT_TITLES.get(self.engine.current_effect, '…')}", fg=WARN)
+            fill = CHIP_FILL["wait"]
+            self.status_sys.configure(
+                text=f"эффект: {EFFECT_TITLES.get(self.engine.current_effect, '…')}",
+                fg=WARN,
+                bg=fill,
+            )
+            self.status_sys_chip.configure(bg=fill)
         else:
-            self.status_sys.configure(text="эффекты: вкл", fg=OK)
+            fill = CHIP_FILL["live"]
+            self.status_sys.configure(text="эффекты: вкл", fg=OK, bg=fill)
+            self.status_sys_chip.configure(bg=fill)
         self.after(500, self._tick)
 
+    def _paint_update(self, status: str, detail: str = "") -> None:
+        labels = {
+            "current": "GH: ок",
+            "updated": "GH: перезапуск",
+            "pending": "GH: перезапуск",
+            "skipped": "GH: git",
+            "error": "GH: нет сети",
+            "off": "GH: выкл",
+            "checking": "GH: …",
+        }
+        colors = {
+            "current": (OK, CHIP_FILL["live"]),
+            "updated": (WARN, CHIP_FILL["wait"]),
+            "pending": (WARN, CHIP_FILL["wait"]),
+            "skipped": (MUTED, CHIP_BG),
+            "error": (MUTED, CHIP_BG),
+            "off": (MUTED, CHIP_BG),
+            "checking": (WARN, CHIP_FILL["wait"]),
+        }
+        fg, fill = colors.get(status, (MUTED, CHIP_BG))
+        if hasattr(self, "status_upd"):
+            self.status_upd.configure(text=labels.get(status, "GH: …"), fg=fg, bg=fill)
+            self.status_upd_chip.configure(bg=fill)
+        pending = status in {"updated", "pending"}
+        self._update_pending = pending
+        if hasattr(self, "btn_restart_update"):
+            if pending and not self.btn_restart_update.winfo_ismapped():
+                self.btn_restart_update.pack(side="right", padx=8)
+            elif not pending and self.btn_restart_update.winfo_ismapped():
+                self.btn_restart_update.pack_forget()
+        if detail and status not in {"current", "checking"}:
+            self.log(f"обновление: {detail}")
+
+    def _start_updater(self) -> None:
+        self._update_pending = False
+        self._update_stop = threading.Event()
+        if not bool(self.cfg["general"].get("auto_update", True)):
+            self._paint_update("off")
+        else:
+            self._paint_update("checking")
+        threading.Thread(target=self._updater_loop, name="updater", daemon=True).start()
+
+    def _updater_loop(self) -> None:
+        first = True
+        while not self._update_stop.is_set():
+            if first:
+                first = False
+            else:
+                if self._update_stop.wait(CHECK_EVERY_SEC):
+                    return
+            if not bool(self.cfg["general"].get("auto_update", True)):
+                self.after(0, lambda: self._paint_update("off"))
+                continue
+            try:
+                result = check_and_apply(apply=True)
+            except Exception as exc:
+                result_status, result_detail = "error", str(exc)
+            else:
+                result_status, result_detail = result.status, result.detail
+                if result.changed:
+                    result_status = "updated"
+            self.after(0, lambda s=result_status, d=result_detail: self._paint_update(s, d))
+
+    def _check_update_now(self) -> None:
+        try:
+            self._collect()
+            save_config(self.cfg)
+        except Exception:
+            pass
+        self._paint_update("checking")
+
+        def worker() -> None:
+            try:
+                result = check_and_apply(apply=True, on_status=lambda text: self.log(text))
+                status = "updated" if result.changed else result.status
+                self.after(0, lambda: self._paint_update(status, result.detail))
+            except Exception as exc:
+                self.after(0, lambda: self._paint_update("error", str(exc)))
+
+        threading.Thread(target=worker, name="updater-now", daemon=True).start()
+
+    def _restart_for_update(self) -> None:
+        self.log("Перезапуск, чтобы подхватить обновление с GitHub…")
+        try:
+            self._collect()
+            save_config(self.cfg)
+        except Exception:
+            pass
+        self.engine.shutdown()
+        self.da.stop()
+        self.dp.stop()
+        self.trula.stop()
+        self.webhook.stop()
+        try:
+            self.destroy()
+        except tk.TclError:
+            pass
+        restart_process()
+
     def _on_close(self) -> None:
+        if hasattr(self, "_update_stop"):
+            self._update_stop.set()
         try:
             self._collect()
             save_config(self.cfg)
