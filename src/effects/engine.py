@@ -165,13 +165,14 @@ class EffectEngine:
             self.log(f"Донат пропущен: валюта {donation.currency}, в настройках {wanted}")
             return None
         mode = cfg["general"]["amount_mode"]
+        tolerance = float(cfg["general"].get("amount_tolerance_rub") or 0)
         matches: list[tuple[float, str]] = []
         for effect_id in EFFECT_ORDER:
             effect = get_effect(cfg, effect_id)
             if not effect.get("enabled"):
                 continue
             amount = float(effect["amount"])
-            if mode == "exact" and _amount_close(donation.amount, amount):
+            if mode == "exact" and _amount_close(donation.amount, amount, tolerance):
                 matches.append((amount, effect_id))
             elif mode == "threshold" and donation.amount + 1e-9 >= amount:
                 matches.append((amount, effect_id))
@@ -186,8 +187,18 @@ class EffectEngine:
                 f"нет эффекта на эту сумму (сейчас {', '.join(amounts) or 'нет включённых'})"
             )
             return None
-        matches.sort(key=lambda item: item[0], reverse=True)
-        return matches[0][1]
+        if mode == "exact":
+            matches.sort(key=lambda item: (abs(donation.amount - item[0]), item[0]))
+        else:
+            matches.sort(key=lambda item: item[0], reverse=True)
+        picked = matches[0]
+        if len(matches) > 1:
+            others = ", ".join(f"{amt:g}={EFFECT_TITLES[eid]}" for amt, eid in matches[1:])
+            self.log(
+                f"сумма {donation.amount:g}: беру ближайшее {picked[0]:g} ({EFFECT_TITLES[picked[1]]}), "
+                f"ещё подходило: {others}"
+            )
+        return picked[1]
 
     def _loop(self) -> None:
         while not self._stop:
@@ -349,7 +360,7 @@ class EffectEngine:
         return max(0.0, self._cooldowns.get(effect_id, 0) - time.time())
 
 
-def _amount_close(got: float, wanted: float) -> bool:
-    if abs(got - wanted) < 1.01:
-        return True
-    return round(got) == round(wanted)
+def _amount_close(got: float, wanted: float, tolerance: float = 0.0) -> bool:
+    """Точное совпадение. Допуск по умолчанию — копейки, не ±1₽."""
+    fuzz = max(0.005, float(tolerance or 0))
+    return abs(got - wanted) <= fuzz + 1e-12

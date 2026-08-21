@@ -22,6 +22,7 @@ DEFAULTS: dict[str, Any] = {
         "global_cooldown_sec": 8,
         "test_delay_sec": 3,
         "amount_mode": "exact",
+        "amount_tolerance_rub": 0,
         "currency": "RUB",
         "kill_switch": "alt+5",
         "panic_hotkey": "ctrl+alt+5",

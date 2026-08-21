@@ -510,7 +510,7 @@ class App(tk.Tk):
         self.amount_mode = ttk.Combobox(grid, values=["exact", "threshold"], state="readonly", width=14)
         self.amount_mode.set(g["amount_mode"])
         self.amount_mode.grid(row=0, column=2, sticky="w")
-        ttk.Label(grid, text="exact = только точная сумма, threshold = срабатывает самый дорогой подходящий эффект").grid(
+        ttk.Label(grid, text="exact = строго эта сумма (100 не равно 101). threshold = самый дорогой, который донат покрывает").grid(
             row=0, column=3, sticky="w", padx=8
         )
 
@@ -522,33 +522,41 @@ class App(tk.Tk):
             row=1, column=3, sticky="w", padx=8
         )
 
-        ttk.Label(grid, text="Глобальный кулдаун, сек").grid(row=2, column=1, sticky="e", padx=8)
-        self.global_cd = self._entry(grid, 8)
-        self.global_cd.insert(0, str(g["global_cooldown_sec"]))
-        self.global_cd.grid(row=2, column=2, sticky="w")
-
-        ttk.Label(grid, text="Пауза теста, сек").grid(row=3, column=1, sticky="e", padx=8)
-        self.test_delay = self._entry(grid, 8)
-        self.test_delay.insert(0, str(g.get("test_delay_sec", 3)))
-        self.test_delay.grid(row=3, column=2, sticky="w")
-        ttk.Label(grid, text="после «Тест» или фейк-алерта DA успей перейти в CS2").grid(
-            row=3, column=3, sticky="w", padx=8
+        ttk.Label(grid, text="Допуск суммы, ₽").grid(row=2, column=1, sticky="e", padx=8)
+        self.amount_tolerance = self._entry(grid, 8)
+        self.amount_tolerance.insert(0, str(g.get("amount_tolerance_rub", 0)))
+        self.amount_tolerance.grid(row=2, column=2, sticky="w")
+        ttk.Label(grid, text="0 = только точное число. 1 = 100₽ сработает и на 99–101, но возьмётся ближайший эффект").grid(
+            row=2, column=3, sticky="w", padx=8
         )
 
-        ttk.Label(grid, text="Макс. очередь").grid(row=4, column=1, sticky="e", padx=8)
+        ttk.Label(grid, text="Глобальный кулдаун, сек").grid(row=3, column=1, sticky="e", padx=8)
+        self.global_cd = self._entry(grid, 8)
+        self.global_cd.insert(0, str(g["global_cooldown_sec"]))
+        self.global_cd.grid(row=3, column=2, sticky="w")
+
+        ttk.Label(grid, text="Пауза теста, сек").grid(row=4, column=1, sticky="e", padx=8)
+        self.test_delay = self._entry(grid, 8)
+        self.test_delay.insert(0, str(g.get("test_delay_sec", 3)))
+        self.test_delay.grid(row=4, column=2, sticky="w")
+        ttk.Label(grid, text="после «Тест» или фейк-алерта DA успей перейти в CS2").grid(
+            row=4, column=3, sticky="w", padx=8
+        )
+
+        ttk.Label(grid, text="Макс. очередь").grid(row=5, column=1, sticky="e", padx=8)
         self.max_queue = self._entry(grid, 8)
         self.max_queue.insert(0, str(g["max_queue"]))
-        self.max_queue.grid(row=4, column=2, sticky="w")
+        self.max_queue.grid(row=5, column=2, sticky="w")
 
-        ttk.Label(grid, text="Аварийный стоп").grid(row=5, column=1, sticky="e", padx=8)
+        ttk.Label(grid, text="Аварийный стоп").grid(row=6, column=1, sticky="e", padx=8)
         self.kill_switch = self._entry(grid, 14)
         self.kill_switch.insert(0, g["kill_switch"])
-        self.kill_switch.grid(row=5, column=2, sticky="w")
+        self.kill_switch.grid(row=6, column=2, sticky="w")
 
-        ttk.Label(grid, text="Паника").grid(row=6, column=1, sticky="e", padx=8)
+        ttk.Label(grid, text="Паника").grid(row=7, column=1, sticky="e", padx=8)
         self.panic_hotkey = self._entry(grid, 14)
         self.panic_hotkey.insert(0, g["panic_hotkey"])
-        self.panic_hotkey.grid(row=6, column=2, sticky="w")
+        self.panic_hotkey.grid(row=7, column=2, sticky="w")
 
         ttk.Label(
             self.tab_general,
@@ -823,6 +831,9 @@ class App(tk.Tk):
         self.cfg["general"]["require_cs2_running"] = self.require_running.get()
         self.cfg["general"]["require_cs2_focused"] = self.require_focus.get()
         self.cfg["general"]["amount_mode"] = self.amount_mode.get()
+        self.cfg["general"]["amount_tolerance_rub"] = float(
+            self.amount_tolerance.get() or 0
+        ) if hasattr(self, "amount_tolerance") else 0
         self.cfg["general"]["queue_mode"] = self.queue_mode.get()
         self.cfg["general"]["global_cooldown_sec"] = float(self.global_cd.get() or 0)
         self.cfg["general"]["test_delay_sec"] = float(self.test_delay.get() or 0)
