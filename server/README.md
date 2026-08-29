@@ -6,7 +6,15 @@
 
 ```bash
 # скопируй папку server/ на Ubuntu, затем:
+sed -i 's/\r$//' install.sh voice_relay.py voice-relay.service
 sudo bash install.sh
+```
+
+Если `apt-get update` ругается на `repo.virtuozzo.com` / 403 — это репозиторий хостера, не наш скрипт. Новый `install.sh` это пропускает. Или поставь без apt:
+
+```bash
+python3 -m venv /opt/cs2-voice/venv
+/opt/cs2-voice/venv/bin/pip install 'websockets>=13.0'
 ```
 
 Скрипт поставит сервис, откроет порт **8766** и напечатает:
