@@ -43,6 +43,13 @@
     "host": "127.0.0.1",
     "port": 8765
   },
+  "voice": {
+    "enabled": false,
+    "server": "",
+    "name": "стример",
+    "volume": 80,
+    "beep": true
+  },
   "cs2": {
     "process_name": "cs2.exe",
     "window_title": "Counter-Strike 2",

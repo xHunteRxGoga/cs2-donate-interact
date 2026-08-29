@@ -17,6 +17,8 @@ from src.donations.webhook import WebhookServer
 from src.effects.cs2 import is_cs2_running
 from src.effects.engine import EffectEngine
 from src.updater import CHECK_EVERY_SEC, check_and_apply, restart_process
+from src.voice import Voice
+from src.voice_link import VoiceLink, normalize_ws_url
 from src.theme import (
     ACCENT,
     ACCENT_DARK,
@@ -68,6 +70,9 @@ class App(tk.Tk):
         self.dp = DonatePayClient(self._on_donation, self.log)
         self.trula = TrulaClient(self._on_donation, self.log)
         self.webhook = WebhookServer(self._on_donation, self.log)
+        self.voice = Voice(self.log)
+        self.voice.set_volume(int((self.cfg.get("voice") or {}).get("volume") or 80))
+        self.voice_link = VoiceLink(self._on_voice_say, self.log, role="streamer")
         self._quiet_log_until: dict[str, float] = {}
         self._build_style()
         self._build()
@@ -265,6 +270,7 @@ class App(tk.Tk):
         self.status_trula_chip, self.status_trula = self._chip(chips, "Trula: нет")
         self.status_dp_chip, self.status_dp = self._chip(chips, "DP: нет")
         self.status_da_chip, self.status_da = self._chip(chips, "DA: нет")
+        self.status_voice_chip, self.status_voice = self._chip(chips, "голос: нет")
         self.status_sys.configure(fg=OK)
         self.status_upd_chip.pack(side="right", padx=(6, 0))
         self.status_sys_chip.pack(side="right", padx=6)
@@ -272,6 +278,7 @@ class App(tk.Tk):
         self.status_trula_chip.pack(side="right", padx=6)
         self.status_dp_chip.pack(side="right", padx=6)
         self.status_da_chip.pack(side="right", padx=6)
+        self.status_voice_chip.pack(side="right", padx=6)
 
         accent = tk.Frame(self, bg=STRIPE, height=2)
         accent.grid(row=1, column=0, sticky="ew", padx=20, pady=(12, 4))
@@ -297,16 +304,19 @@ class App(tk.Tk):
         self.tab_general = ttk.Frame(nb)
         self.tab_da = ttk.Frame(nb)
         self.tab_keys = ttk.Frame(nb)
+        self.tab_voice = ttk.Frame(nb)
         self.tab_log = ttk.Frame(nb)
         nb.add(self.tab_effects, text="Эффекты")
         nb.add(self.tab_general, text="Кулдауны и работа")
         nb.add(self.tab_da, text="Донаты")
         nb.add(self.tab_keys, text="Клавиши CS2")
+        nb.add(self.tab_voice, text="Голос")
         nb.add(self.tab_log, text="Лог")
         self._build_effects()
         self._build_general()
         self._build_da()
         self._build_keys()
+        self._build_voice()
         self._build_log()
         self.bind_all("<MouseWheel>", self._on_mousewheel)
 
@@ -847,6 +857,120 @@ class App(tk.Tk):
         self.window_title.insert(0, self.cfg["cs2"]["window_title"])
         self.window_title.grid(row=10, column=1, sticky="w", pady=10)
 
+    def _build_voice(self) -> None:
+        voice = self.cfg.setdefault("voice", {})
+        ttk.Label(
+            self.tab_voice,
+            text="Ты пишешь в run-chat.bat — здесь играет системный голос Windows. Эффекты CS2 от чата не запускаются.",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(8, 8))
+
+        card = self._card(self.tab_voice)
+        inner = tk.Frame(card, bg=CARD)
+        inner.pack(fill="x", padx=12, pady=12)
+
+        self.voice_enabled = tk.BooleanVar(value=bool(voice.get("enabled")))
+        ttk.Checkbutton(inner, text="Слушать чат с сервера", variable=self.voice_enabled, style="Card.TCheckbutton").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8)
+        )
+
+        ttk.Label(inner, text="Адрес сервера", style="Card.TLabel").grid(row=1, column=0, sticky="e", padx=(0, 8), pady=6)
+        self.voice_server = self._entry(inner, 48)
+        self.voice_server.insert(0, str(voice.get("server") or ""))
+        self.voice_server.grid(row=1, column=1, sticky="we", pady=6)
+        ttk.Label(inner, text="ws://IP:8766", style="CardMuted.TLabel").grid(row=1, column=2, sticky="w", padx=8)
+
+        ttk.Label(inner, text="Общий ключ", style="Card.TLabel").grid(row=2, column=0, sticky="e", padx=(0, 8), pady=6)
+        token_wrap = ttk.Frame(inner)
+        token_wrap.grid(row=2, column=1, sticky="we", pady=6)
+        self.voice_token = self._entry(token_wrap, 48, secret=True)
+        self.voice_token.insert(0, str(voice.get("token") or ""))
+        self.voice_token.pack(side="left", fill="x", expand=True)
+        self._paste_button(token_wrap, self.voice_token).pack(side="left", padx=(8, 0))
+
+        ttk.Label(inner, text="Громкость", style="Card.TLabel").grid(row=3, column=0, sticky="e", padx=(0, 8), pady=10)
+        vol_wrap = tk.Frame(inner, bg=CARD)
+        vol_wrap.grid(row=3, column=1, sticky="we", pady=10)
+        self.voice_vol = tk.IntVar(value=int(voice.get("volume") or 80))
+        self.voice_vol_lbl = tk.Label(vol_wrap, text=f"{self.voice_vol.get()}%", bg=CARD, fg=ACCENT, font=(FONT, 10, "bold"), width=5)
+        scale = tk.Scale(
+            vol_wrap,
+            from_=0,
+            to=100,
+            orient="horizontal",
+            variable=self.voice_vol,
+            command=self._on_voice_vol,
+            bg=CARD,
+            fg=FG,
+            troughcolor=ENTRY_BG,
+            highlightthickness=0,
+            bd=0,
+            sliderrelief="flat",
+            activebackground=ACCENT_DARK,
+            length=280,
+            showvalue=False,
+        )
+        scale.pack(side="left", fill="x", expand=True)
+        self.voice_vol_lbl.pack(side="left", padx=(8, 0))
+
+        self.voice_beep = tk.BooleanVar(value=bool(voice.get("beep", True)))
+        ttk.Checkbutton(
+            inner,
+            text="Короткий звук как на донате, потом голос читает текст",
+            variable=self.voice_beep,
+            style="Card.TCheckbutton",
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=4)
+
+        btns = ttk.Frame(inner)
+        btns.grid(row=5, column=1, sticky="w", pady=(10, 4))
+        ttk.Button(btns, text="Сохранить и слушать", style="Accent.TButton", command=self._reconnect_voice).pack(
+            side="left"
+        )
+        ttk.Button(btns, text="Проверить голос", command=self._test_voice).pack(side="left", padx=8)
+
+        inner.columnconfigure(1, weight=1)
+
+        self.dash_voice = tk.Label(
+            card,
+            text="Голос: не привязан",
+            bg=CARD,
+            fg=BAD,
+            font=(FONT, 10, "bold"),
+            anchor="w",
+        )
+        self.dash_voice.pack(fill="x", padx=14, pady=(0, 2))
+        self.dash_voice_d = tk.Label(card, text="", bg=CARD, fg=MUTED, font=(FONT, 9), anchor="w", wraplength=900, justify="left")
+        self.dash_voice_d.pack(fill="x", padx=14)
+        self.voice_last = tk.Label(
+            card,
+            text="Последнее сообщение: ещё не было",
+            bg=CARD,
+            fg=ACCENT,
+            font=(FONT, 10, "bold"),
+            anchor="w",
+            wraplength=900,
+            justify="left",
+        )
+        self.voice_last.pack(fill="x", padx=14, pady=(8, 14))
+
+        for line in (
+            "1. На Ubuntu в папке server/ запусти sudo bash install.sh — скрипт напечатает адрес и ключ.",
+            "2. Вставь их сюда и нажми «Сохранить и слушать». Тот же ключ — у себя в run-chat.bat.",
+            "3. Пишешь «Привет» у себя — здесь Windows читает «Привет» (обычно голос Ирина, если стоит русский пакет).",
+        ):
+            ttk.Label(self.tab_voice, text=line, style="Muted.TLabel").pack(anchor="w", pady=2)
+
+    def _on_voice_vol(self, _value: str | None = None) -> None:
+        vol = int(self.voice_vol.get())
+        self.voice.set_volume(vol)
+        if hasattr(self, "voice_vol_lbl"):
+            self.voice_vol_lbl.configure(text=f"{vol}%")
+
+    def _test_voice(self) -> None:
+        self.voice.set_volume(int(self.voice_vol.get()))
+        self.voice.say("проверка голоса")
+        self.log("озвучка: локальная проверка. Должен сыграть системный голос Windows, сервер для этого не нужен.")
+
     def _build_log(self) -> None:
         row = ttk.Frame(self.tab_log)
         row.pack(fill="x", pady=(8, 0))
@@ -878,6 +1002,7 @@ class App(tk.Tk):
         self.log("Живой донат: зелёный статус «подключено», потом тест 100₽ в кабинете. В логе должно быть «приложение увидело донат».")
         self.log(f"Файл лога: {LOG_PATH}")
         self.log("Автообновление: при старте и раз в 45 мин смотрит GitHub. Токены и видео не затирает. На стриме само окно не закрывает.")
+        self.log("Чат со стримером: вкладка Голос + run-chat.bat. Текст читает системный голос Windows.")
 
     def _collect(self) -> None:
         self.cfg["general"]["enabled"] = self.enabled_var.get()
@@ -913,6 +1038,12 @@ class App(tk.Tk):
         self.cfg["donatepay"]["poll_interval_sec"] = float(self.dp_interval.get() or 8)
         self.cfg["trula"]["enabled"] = self.trula_enabled.get()
         self.cfg["trula"]["widget_url"] = self.trula_widget.get().strip()
+        self.cfg.setdefault("voice", {})
+        self.cfg["voice"]["enabled"] = self.voice_enabled.get() if hasattr(self, "voice_enabled") else False
+        self.cfg["voice"]["server"] = normalize_ws_url(self.voice_server.get() if hasattr(self, "voice_server") else "")
+        self.cfg["voice"]["token"] = self.voice_token.get().strip() if hasattr(self, "voice_token") else ""
+        self.cfg["voice"]["volume"] = int(self.voice_vol.get()) if hasattr(self, "voice_vol") else 80
+        self.cfg["voice"]["beep"] = self.voice_beep.get() if hasattr(self, "voice_beep") else True
         self.cfg["cs2"]["window_title"] = self.window_title.get().strip() or "Counter-Strike 2"
         for key, entry in self.key_entries.items():
             self.cfg["cs2"]["keys"][key] = entry.get().strip()
@@ -939,6 +1070,7 @@ class App(tk.Tk):
                 self._reconnect_dp()
             if self.cfg["trula"].get("enabled") and self.cfg["trula"].get("widget_url"):
                 self._reconnect_trula()
+            self._start_voice()
         except Exception as exc:
             messagebox.showerror("Ошибка", str(exc))
 
@@ -1100,6 +1232,49 @@ class App(tk.Tk):
             return
         self.trula.start(self.cfg["trula"].get("widget_url", ""))
 
+    def _reconnect_voice(self) -> None:
+        try:
+            self._collect()
+            save_config(self.cfg)
+        except Exception as exc:
+            messagebox.showerror("Голос", str(exc))
+            return
+        if not self.cfg["voice"].get("server") or not self.cfg["voice"].get("token"):
+            messagebox.showinfo("Голос", "Вставь адрес сервера (ws://IP:8766) и общий ключ.")
+            return
+        self.voice_enabled.set(True)
+        self.cfg["voice"]["enabled"] = True
+        save_config(self.cfg)
+        self._start_voice()
+        self.log("Голос: подключаюсь к серверу…")
+
+    def _start_voice(self) -> None:
+        voice = self.cfg.setdefault("voice", {})
+        self.voice.set_volume(int(voice.get("volume") or 80))
+        if voice.get("enabled") and voice.get("server") and voice.get("token"):
+            self.voice_link.start(str(voice.get("server") or ""), str(voice.get("token") or ""))
+        else:
+            self.voice_link.stop()
+            if voice.get("enabled"):
+                self.log("Голос: включён, но нет адреса или ключа. Вкладка Голос.")
+
+    def _on_voice_say(self, who: str, text: str) -> None:
+        voice = self.cfg.get("voice") or {}
+        self.log(f"чат → озвучка: {who}: {text}")
+        self.voice.set_volume(int(voice.get("volume") or 80))
+        self.voice.say(text)
+        if voice.get("beep", True):
+            threading.Thread(target=self.engine._beep, daemon=True).start()
+        overlay = self.cfg.get("overlay") or {}
+        if overlay.get("enabled", True):
+            self.engine.toast.show(who, text, "чат", float(overlay.get("duration_sec") or 5.5), wait=False)
+
+        def show() -> None:
+            if hasattr(self, "voice_last"):
+                self.voice_last.configure(text=f"Последнее сообщение: {who}: {text}", fg=OK)
+
+        self.ui_call(show)
+
     def _start_services(self) -> None:
         da = self.cfg["donationalerts"]
         if da.get("widget_token") or da.get("access_token"):
@@ -1122,6 +1297,7 @@ class App(tk.Tk):
             self.log("Trula не привязана. Вкладка Донаты → вставь ссылку виджета и нажми «Сохранить и проверить связь».")
         if self.cfg["webhook"].get("enabled"):
             self.webhook.start(self.cfg["webhook"]["host"], int(self.cfg["webhook"]["port"]))
+        self._start_voice()
 
     def _on_donation(self, donation: Donation) -> None:
         kind = "тест-алерт" if donation.is_test else "ДОНАТ"
@@ -1237,6 +1413,14 @@ class App(tk.Tk):
             self.trula,
             "Trula",
         )
+        self._paint_link(
+            self.status_voice,
+            self.status_voice_chip,
+            getattr(self, "dash_voice", None),
+            getattr(self, "dash_voice_d", None),
+            self.voice_link,
+            "голос",
+        )
         if self.engine.paused or not self.cfg["general"]["enabled"]:
             fill = CHIP_FILL["bad"]
             self.status_sys.configure(text="эффекты: выкл", fg=BAD, bg=fill)
@@ -1348,6 +1532,8 @@ class App(tk.Tk):
         self.dp.stop()
         self.trula.stop()
         self.webhook.stop()
+        self.voice_link.stop()
+        self.voice.stop()
         try:
             self.destroy()
         except tk.TclError:
@@ -1371,6 +1557,8 @@ class App(tk.Tk):
         self.dp.stop()
         self.trula.stop()
         self.webhook.stop()
+        self.voice_link.stop()
+        self.voice.stop()
         self.destroy()
 
 

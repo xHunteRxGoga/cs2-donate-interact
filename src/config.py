@@ -57,6 +57,14 @@ DEFAULTS: dict[str, Any] = {
         "host": "127.0.0.1",
         "port": 8765,
     },
+    "voice": {
+        "enabled": False,
+        "server": "",
+        "token": "",
+        "name": "стример",
+        "volume": 80,
+        "beep": True,
+    },
     "cs2": {
         "process_name": "cs2.exe",
         "window_title": "Counter-Strike 2",
@@ -180,6 +188,8 @@ def load_config() -> dict[str, Any]:
             data["donatepay"]["widget_token"] = secrets["donatepay_widget_token"]
         if secrets.get("trula_widget_url"):
             data["trula"]["widget_url"] = secrets["trula_widget_url"]
+        if secrets.get("voice_token"):
+            data.setdefault("voice", {})["token"] = secrets["voice_token"]
     return data
 
 
@@ -197,6 +207,7 @@ def save_config(data: dict[str, Any]) -> None:
             "donatepay_api_token": payload["donatepay"].get("api_token", ""),
             "donatepay_widget_token": payload["donatepay"].get("widget_token", ""),
             "trula_widget_url": payload["trula"].get("widget_url", ""),
+            "voice_token": (payload.get("voice") or {}).get("token", ""),
         }
     )
     payload["donationalerts"]["access_token"] = ""
@@ -206,6 +217,7 @@ def save_config(data: dict[str, Any]) -> None:
     payload["donatepay"]["api_token"] = ""
     payload["donatepay"]["widget_token"] = ""
     payload["trula"]["widget_url"] = ""
+    payload.setdefault("voice", {})["token"] = ""
     CONFIG_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     SECRETS_PATH.write_text(json.dumps(secrets, ensure_ascii=False, indent=2), encoding="utf-8")
 
