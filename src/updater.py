@@ -20,7 +20,7 @@ ZIP_URL = f"https://github.com/{REPO}/archive/refs/heads/{BRANCH}.zip"
 REVISION_PATH = ROOT / ".app_revision"
 NOTICE_PATH = ROOT / ".update_ok"
 BANNER_PATH = ROOT / ".shown_banner"
-BANNER = "2026-09-donation-tts-media"
+BANNER = "2026-09-volume-hotkeys"
 UA = {"User-Agent": "cs2-donate-interact-updater", "Accept": "application/vnd.github+json"}
 CHECK_EVERY_SEC = 45 * 60
 

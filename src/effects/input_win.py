@@ -64,6 +64,10 @@ VK_RIGHT = 0x27
 VK_DOWN = 0x28
 VK_RMENU = 0xA5
 VK_RCONTROL = 0xA3
+VK_OEM_MINUS = 0xBD
+VK_OEM_PLUS = 0xBB
+VK_ADD = 0x6B
+VK_SUBTRACT = 0x6D
 
 ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
 LRESULT = ctypes.c_ssize_t
@@ -255,6 +259,16 @@ SCAN_BY_NAME = {
     "space": 0x39,
     " ": 0x39,
     "enter": 0x1C,
+    "-": 0x0C,
+    "minus": 0x0C,
+    "oem_minus": 0x0C,
+    "=": 0x0D,
+    "plus": 0x0D,
+    "oem_plus": 0x0D,
+    "add": 0x4E,
+    "numplus": 0x4E,
+    "numminus": 0x4A,
+    "subtract": 0x4A,
 }
 
 _log_fn: Callable[[str], None] | None = None
@@ -334,6 +348,16 @@ NAME_TO_VK = {
     " ": 0x20,
     "space": 0x20,
     "enter": 0x0D,
+    "minus": VK_OEM_MINUS,
+    "oem_minus": VK_OEM_MINUS,
+    "-": VK_OEM_MINUS,
+    "plus": VK_OEM_PLUS,
+    "oem_plus": VK_OEM_PLUS,
+    "=": VK_OEM_PLUS,
+    "add": VK_ADD,
+    "numplus": VK_ADD,
+    "subtract": VK_SUBTRACT,
+    "numminus": VK_SUBTRACT,
 }
 
 for _code in range(ord("a"), ord("z") + 1):
@@ -470,6 +494,45 @@ def tap_key(name: str, hold_sec: float = 0.08) -> None:
     _send([_key_input(vk, scan, False, True)])
     time.sleep(hold_sec)
     _send([_key_input(vk, scan, True, True)])
+
+
+def split_combo(combo: str) -> list[str]:
+    raw = (combo or "").strip().lower().replace(" ", "")
+    if not raw:
+        raise ValueError("пустой хоткей")
+    mods: list[str] = []
+    key = raw
+    for mod in ("ctrl", "control", "shift", "alt", "win"):
+        token = "ctrl" if mod == "control" else mod
+        prefix = mod + "+"
+        if key.startswith(prefix):
+            mods.append(token)
+            key = key[len(prefix) :]
+    if key in {"+", "plus", "oem_plus", "="}:
+        key = "plus"
+    elif key in {"-", "minus", "oem_minus"}:
+        key = "minus"
+    if not key:
+        raise ValueError(f"не разобрал хоткей: {combo}")
+    return mods + [key]
+
+
+def tap_hotkey(combo: str, hold_sec: float = 0.06) -> None:
+    parts = split_combo(combo)
+    mods, key = parts[:-1], parts[-1]
+    _log(f"ввод: хоткей {combo!r} → {mods}+{key}")
+    try:
+        for mod in mods:
+            key_down(mod)
+            time.sleep(0.02)
+        tap_key(key, hold_sec)
+        time.sleep(0.02)
+    finally:
+        for mod in reversed(mods):
+            try:
+                key_up(mod)
+            except Exception:
+                pass
 
 
 def key_down(name: str) -> None:
@@ -638,12 +701,9 @@ def foreground_title() -> str:
 
 
 def parse_hotkey(combo: str) -> tuple[set[str], int]:
-    parts = [p.strip().lower() for p in combo.replace(" ", "").split("+") if p.strip()]
-    mods = {p for p in parts if p in {"ctrl", "alt", "shift", "win"}}
-    keys = [p for p in parts if p not in mods]
-    if len(keys) != 1:
-        raise ValueError(f"Нужна одна основная клавиша в комбинации: {combo}")
-    return mods, vk_from_name(keys[0])
+    parts = split_combo(combo)
+    mods = {p for p in parts[:-1] if p in {"ctrl", "alt", "shift", "win"}}
+    return mods, vk_from_name(parts[-1])
 
 
 def hotkey_pressed(combo: str, vk_code: int, flags: int) -> bool:

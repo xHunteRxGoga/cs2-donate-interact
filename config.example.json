@@ -65,10 +65,24 @@
       "forward": "w",
       "back": "s",
       "left": "a",
-      "right": "d"
+      "right": "d",
+      "volume_up": "alt++",
+      "volume_down": "alt+-"
     }
   },
   "effects": {
+    "volume_down": {
+      "enabled": true,
+      "amount": 10,
+      "cooldown_sec": 4,
+      "steps": 3
+    },
+    "volume_up": {
+      "enabled": true,
+      "amount": 20,
+      "cooldown_sec": 4,
+      "steps": 3
+    },
     "flash": {
       "enabled": true,
       "amount": 100,

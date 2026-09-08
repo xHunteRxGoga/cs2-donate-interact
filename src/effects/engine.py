@@ -22,6 +22,7 @@ from src.effects.cs2 import (
     kill_cs2,
     mouse_jerk,
     nade_and_crouch,
+    volume_nudge,
 )
 from src.effects.flash import FlashController
 from src.effects.input_win import InputGuard, foreground_title, is_admin, set_input_logger
@@ -29,6 +30,8 @@ from src.effects.takeover import TakeoverController
 from src.effects.toast import ToastController
 from src.effects.youtube_audio import YoutubeAudio
 from src.voice import Voice
+
+NO_GAME_EFFECTS = {"flash", "kill_cs2", "minecraft_takeover", "volume_up", "volume_down"}
 
 
 @dataclass(slots=True)
@@ -271,7 +274,7 @@ class EffectEngine:
             self.log(f"{EFFECT_TITLES[job.effect_id]} на кулдауне ещё {ready_at - now:.1f}с")
             return
 
-        needs_game = job.effect_id not in {"flash", "kill_cs2", "minecraft_takeover"}
+        needs_game = job.effect_id not in NO_GAME_EFFECTS
         delay = float(cfg["general"].get("test_delay_sec") or 0) if is_test else 0
         if delay <= 0 and needs_game and not is_cs2_focused(cfg["cs2"]["window_title"]):
             delay = float(cfg["general"].get("test_delay_sec") or 0)
@@ -310,7 +313,7 @@ class EffectEngine:
             self.toast.show(who, EFFECT_TITLES[job.effect_id], amount, float(overlay_cfg.get("duration_sec") or 5.5), wait=False)
             self.log(f"оверлей: {who} → {EFFECT_TITLES[job.effect_id]} {amount}")
 
-        needs_game = job.effect_id not in {"flash", "minecraft_takeover"}
+        needs_game = job.effect_id not in NO_GAME_EFFECTS
         if needs_game and cfg["general"]["require_cs2_running"] and not is_cs2_running(cfg["cs2"]["process_name"]):
             self.log("CS2 не запущен — клавиши пропущены. Табличка уже должна быть видна.")
             return
@@ -320,7 +323,7 @@ class EffectEngine:
 
         self.log(f"Диагностика перед эффектом: {diagnose_cs2(cfg, self.guard.hook_ok())}")
         active = foreground_title() or "(нет)"
-        if job.effect_id not in {"flash", "kill_cs2", "minecraft_takeover"}:
+        if job.effect_id not in NO_GAME_EFFECTS:
             if not is_cs2_focused(cfg["cs2"]["window_title"]):
                 self.log(
                     f"CS2 не в фокусе (сейчас «{active}»). "
@@ -366,6 +369,10 @@ class EffectEngine:
             nade_and_crouch(cfg)
         elif effect_id == "kill_cs2":
             kill_cs2(cfg["cs2"]["process_name"])
+        elif effect_id == "volume_up":
+            volume_nudge(cfg, "up")
+        elif effect_id == "volume_down":
+            volume_nudge(cfg, "down")
         elif effect_id == "minecraft_takeover":
             self.takeover.run(
                 resolve_video_path(cfg),

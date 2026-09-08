@@ -47,6 +47,8 @@ from src.theme import (
 )
 
 EFFECT_HINTS = {
+    "volume_down": "Alt+−, CS2 не нужен",
+    "volume_up": "Alt++, CS2 не нужен",
     "flash": "белый экран",
     "drop_weapon": "клавиша дропа",
     "mouse_jerk": "рывок мыши",
@@ -525,6 +527,12 @@ class App(tk.Tk):
                 duration.insert(0, str(effect.get("duration_sec", 8 if effect_id == "flash" else 10)))
                 extra["duration_sec"] = duration
                 duration.pack(side="left")
+            if effect_id in {"volume_up", "volume_down"}:
+                tk.Label(controls, text="шаги", bg=CARD, fg=MUTED, font=(FONT, 8)).pack(side="left", padx=(10, 4))
+                steps = self._entry(controls, 4)
+                steps.insert(0, str(effect.get("steps", 3)))
+                extra["steps"] = steps
+                steps.pack(side="left")
             ttk.Button(
                 controls,
                 text="Тест",
@@ -845,6 +853,8 @@ class App(tk.Tk):
             "back": "Назад",
             "left": "Влево",
             "right": "Вправо",
+            "volume_up": "Громкость вверх",
+            "volume_down": "Громкость вниз",
         }
         for i, (key, title) in enumerate(labels.items(), start=1):
             ttk.Label(box, text=title).grid(row=i, column=0, sticky="e", padx=8, pady=4)
@@ -852,15 +862,20 @@ class App(tk.Tk):
             entry.insert(0, keys.get(key, ""))
             entry.grid(row=i, column=1, sticky="w")
             self.key_entries[key] = entry
-        ttk.Label(box, text="Бросок гранаты под ноги").grid(row=9, column=0, sticky="e", padx=8, pady=4)
+        ttk.Label(box, text="Бросок гранаты под ноги").grid(row=11, column=0, sticky="e", padx=8, pady=4)
         entry = self._entry(box, 12)
         entry.insert(0, keys.get("nade_throw", "rbutton"))
-        entry.grid(row=9, column=1, sticky="w")
+        entry.grid(row=11, column=1, sticky="w")
         self.key_entries["nade_throw"] = entry
-        ttk.Label(box, text="Заголовок окна CS2").grid(row=10, column=0, sticky="e", padx=8, pady=10)
+        ttk.Label(box, text="Заголовок окна CS2").grid(row=12, column=0, sticky="e", padx=8, pady=10)
         self.window_title = self._entry(box, 28)
         self.window_title.insert(0, self.cfg["cs2"]["window_title"])
-        self.window_title.grid(row=10, column=1, sticky="w", pady=10)
+        self.window_title.grid(row=12, column=1, sticky="w", pady=10)
+        ttk.Label(
+            box,
+            text="Громкость: по умолчанию Alt++ и Alt+−. Если у стримера numpad — поставь alt+add / alt+numminus.",
+            style="Muted.TLabel",
+        ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
     def _build_voice(self) -> None:
         voice = self.cfg.setdefault("voice", {})
@@ -1061,6 +1076,8 @@ class App(tk.Tk):
             self.cfg["effects"][effect_id]["cooldown_sec"] = float(vars_["cooldown_sec"].get() or 0)
             if "duration_sec" in vars_:
                 self.cfg["effects"][effect_id]["duration_sec"] = float(vars_["duration_sec"].get() or 0)
+            if "steps" in vars_:
+                self.cfg["effects"][effect_id]["steps"] = int(vars_["steps"].get() or 1)
 
     def _save(self) -> None:
         try:

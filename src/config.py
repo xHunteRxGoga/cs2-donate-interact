@@ -81,9 +81,13 @@ DEFAULTS: dict[str, Any] = {
             "back": "s",
             "left": "a",
             "right": "d",
+            "volume_up": "alt++",
+            "volume_down": "alt+-",
         },
     },
     "effects": {
+        "volume_down": {"enabled": True, "amount": 10, "cooldown_sec": 4, "steps": 3},
+        "volume_up": {"enabled": True, "amount": 20, "cooldown_sec": 4, "steps": 3},
         "flash": {
             "enabled": True,
             "amount": 100,
@@ -129,6 +133,8 @@ DEFAULTS: dict[str, Any] = {
 }
 
 EFFECT_ORDER = [
+    "volume_down",
+    "volume_up",
     "flash",
     "drop_weapon",
     "mouse_jerk",
@@ -139,6 +145,8 @@ EFFECT_ORDER = [
 ]
 
 EFFECT_TITLES = {
+    "volume_down": "Громкость вниз (Alt+−)",
+    "volume_up": "Громкость вверх (Alt++)",
     "flash": "Флешка на весь экран",
     "drop_weapon": "Дроп оружия",
     "mouse_jerk": "Срыв сенсы",

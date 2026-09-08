@@ -20,6 +20,7 @@ from src.effects.input_win import (
     key_up,
     move_mouse,
     tap_key,
+    tap_hotkey,
     user32,
     _log,
 )
@@ -153,3 +154,16 @@ def kill_cs2(process_name: str = "cs2.exe") -> None:
         capture_output=True,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
+
+
+def volume_nudge(cfg: dict[str, Any], direction: str) -> None:
+    effect_id = "volume_up" if direction == "up" else "volume_down"
+    effect = cfg["effects"][effect_id]
+    keys = cfg["cs2"]["keys"]
+    combo = str(keys.get(effect_id) or ("alt++" if direction == "up" else "alt+-"))
+    steps = max(1, int(effect.get("steps") or 3))
+    _log(f"громкость {direction}: {combo} × {steps}, без фокуса CS2")
+    for _ in range(steps):
+        tap_hotkey(combo)
+        time.sleep(0.08)
+    _log(f"громкость {direction}: готово")
