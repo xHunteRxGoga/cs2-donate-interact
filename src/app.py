@@ -16,6 +16,7 @@ from src.donations.trula import TrulaClient
 from src.donations.webhook import WebhookServer
 from src.effects.cs2 import is_cs2_running
 from src.effects.engine import EffectEngine
+from src.effects.youtube_audio import list_audio_devices
 from src.updater import CHECK_EVERY_SEC, check_and_apply, consume_success_notice, restart_process
 from src.voice import Voice
 from src.voice_link import VoiceLink, normalize_ws_url
@@ -47,8 +48,6 @@ from src.theme import (
 )
 
 EFFECT_HINTS = {
-    "volume_down": "Alt+−, CS2 не нужен",
-    "volume_up": "Alt++, CS2 не нужен",
     "flash": "белый экран",
     "drop_weapon": "клавиша дропа",
     "mouse_jerk": "рывок мыши",
@@ -70,6 +69,7 @@ class App(tk.Tk):
         self.voice = Voice(self.log)
         self.voice.set_volume(int((self.cfg.get("voice") or {}).get("volume") or 80))
         self.engine = EffectEngine(lambda: self.cfg, self.log, self.ui_call, voice=self.voice)
+        self.engine.on_youtube_volume = self._on_yt_vol_from_hotkey
         self.da = DonationAlertsClient(self._on_donation, self.log)
         self.dp = DonatePayClient(self._on_donation, self.log)
         self.trula = TrulaClient(self._on_donation, self.log)
@@ -476,7 +476,7 @@ class App(tk.Tk):
     def _build_effects(self) -> None:
         ttk.Label(
             self.tab_effects,
-            text="Сумма доната запускает один эффект. «Тест»: 3 сек на переход в CS2, потом эффект.",
+            text="Сумма доната запускает один эффект. Громкость музыки — не донат: бинды Alt+ / Alt− на вкладке «Кулдауны и работа».",
             style="Muted.TLabel",
         ).pack(anchor="w", pady=(10, 8))
         body = self._scroll_area(self.tab_effects)
@@ -527,12 +527,6 @@ class App(tk.Tk):
                 duration.insert(0, str(effect.get("duration_sec", 8 if effect_id == "flash" else 10)))
                 extra["duration_sec"] = duration
                 duration.pack(side="left")
-            if effect_id in {"volume_up", "volume_down"}:
-                tk.Label(controls, text="шаги", bg=CARD, fg=MUTED, font=(FONT, 8)).pack(side="left", padx=(10, 4))
-                steps = self._entry(controls, 4)
-                steps.insert(0, str(effect.get("steps", 3)))
-                extra["steps"] = steps
-                steps.pack(side="left")
             ttk.Button(
                 controls,
                 text="Тест",
@@ -577,10 +571,9 @@ class App(tk.Tk):
         self.speak_message = tk.BooleanVar(value=bool(overlay.get("speak_message", True)))
         self.play_youtube = tk.BooleanVar(value=bool(overlay.get("play_youtube", True)))
         ttk.Checkbutton(grid, text="Озвучивать сообщение доната голосом Windows", variable=self.speak_message).grid(row=6, column=0, sticky="w", pady=4)
-        ttk.Checkbutton(grid, text="Играть YouTube из доната Trula в наушники", variable=self.play_youtube).grid(row=7, column=0, sticky="w", pady=4)
         self.auto_update = tk.BooleanVar(value=bool(g.get("auto_update", True)))
-        ttk.Checkbutton(grid, text="Автообновление с GitHub", variable=self.auto_update).grid(row=8, column=0, sticky="w", pady=4)
-        ttk.Button(grid, text="Проверить сейчас", command=self._check_update_now).grid(row=9, column=0, sticky="w", pady=6)
+        ttk.Checkbutton(grid, text="Автообновление с GitHub", variable=self.auto_update).grid(row=7, column=0, sticky="w", pady=4)
+        ttk.Button(grid, text="Проверить сейчас", command=self._check_update_now).grid(row=8, column=0, sticky="w", pady=6)
 
         ttk.Label(grid, text="Режим суммы").grid(row=0, column=1, sticky="e", padx=8)
         self.amount_mode = ttk.Combobox(grid, values=["exact", "threshold"], state="readonly", width=14)
@@ -657,6 +650,162 @@ class App(tk.Tk):
         self.look_down = self._entry(extra, 8)
         self.look_down.insert(0, str(nade.get("look_down_pixels", 3200)))
         self.look_down.grid(row=2, column=1, sticky="w")
+        self._build_music(page)
+
+    def _build_music(self, page: tk.Widget) -> None:
+        overlay = self.cfg.get("overlay") or {}
+        card = self._card(page)
+        inner = tk.Frame(card, bg=CARD)
+        inner.pack(fill="x", padx=12, pady=12)
+        tk.Label(inner, text="Музыка Trula — только в уши стримера", bg=CARD, fg=FG, font=(FONT_TITLE, 11), anchor="w").grid(
+            row=0, column=0, columnspan=3, sticky="w"
+        )
+        tk.Label(
+            inner,
+            text=(
+                "Два компьютера — два разных звука, они не смешиваются сами по себе.\n"
+                "ПК стрима (OBS + Trula): виджет уже включает трек зрителям. Этого достаточно. "
+                "Раньше стример слушал его вторыми наушниками на этом ПК — они сломались, зрителям это не мешает.\n"
+                "ПК игры (эта программа + CS2): здесь трек включается ещё раз, чтобы стример слышал его в игровых наушниках.\n"
+                "Зрителям задвоится только если звук игрового ПК тоже уходит в OBS "
+                "(HDMI/карта захвата со звуком, стерео-микс, Voicemeeter на стрим). "
+                "Тогда выбери USB-наушники стримера, не HDMI и не «динамики» в карту захвата — "
+                "либо на ПК стрима выключи звук с карты захвата, оставь только Trula."
+            ),
+            bg=CARD,
+            fg=MUTED,
+            font=(FONT, 9),
+            wraplength=920,
+            justify="left",
+            anchor="w",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 8))
+        ttk.Checkbutton(
+            inner,
+            text="Играть тот же YouTube на этом ПК (наушники стримера). Зрителям Trula уже играет на ПК стрима",
+            variable=self.play_youtube,
+            style="Card.TCheckbutton",
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        ttk.Label(inner, text="Наушники стримера (этот ПК)", style="Card.TLabel").grid(row=3, column=0, sticky="e", padx=(0, 8), pady=6)
+        dev_wrap = tk.Frame(inner, bg=CARD)
+        dev_wrap.grid(row=3, column=1, columnspan=2, sticky="we", pady=6)
+        self.yt_device = ttk.Combobox(dev_wrap, state="readonly", width=52)
+        self.yt_device.pack(side="left", fill="x", expand=True)
+        ttk.Button(dev_wrap, text="Обновить список", command=self._refresh_yt_devices).pack(side="left", padx=(8, 0))
+        self._yt_device_ids: list[str] = []
+        self._refresh_yt_devices(str(overlay.get("youtube_device") or ""))
+        self.yt_device.bind("<<ComboboxSelected>>", lambda _e: self._apply_yt_device())
+
+        ttk.Label(inner, text="Громкость трека", style="Card.TLabel").grid(row=4, column=0, sticky="e", padx=(0, 8), pady=10)
+        vol_wrap = tk.Frame(inner, bg=CARD)
+        vol_wrap.grid(row=4, column=1, columnspan=2, sticky="we", pady=10)
+        self.yt_vol = tk.IntVar(value=int(overlay.get("youtube_volume") or 80))
+        self.yt_vol_lbl = tk.Label(
+            vol_wrap, text=f"{self.yt_vol.get()}%", bg=CARD, fg=ACCENT, font=(FONT, 10, "bold"), width=5
+        )
+        tk.Scale(
+            vol_wrap,
+            from_=0,
+            to=100,
+            orient="horizontal",
+            variable=self.yt_vol,
+            command=self._on_yt_vol,
+            bg=CARD,
+            fg=FG,
+            troughcolor=ENTRY_BG,
+            highlightthickness=0,
+            bd=0,
+            sliderrelief="flat",
+            activebackground=ACCENT_DARK,
+            length=280,
+            showvalue=False,
+        ).pack(side="left", fill="x", expand=True)
+        self.yt_vol_lbl.pack(side="left", padx=(8, 0))
+
+        ttk.Label(inner, text="Шаг Alt±, %", style="Card.TLabel").grid(row=5, column=0, sticky="e", padx=(0, 8), pady=6)
+        self.yt_vol_step = self._entry(inner, 6)
+        self.yt_vol_step.insert(0, str(overlay.get("youtube_volume_step") or 5))
+        self.yt_vol_step.grid(row=5, column=1, sticky="w", pady=6)
+
+        ttk.Label(inner, text="Alt +", style="Card.TLabel").grid(row=6, column=0, sticky="e", padx=(0, 8), pady=4)
+        self.yt_vol_up = self._entry(inner, 14)
+        self.yt_vol_up.insert(0, str(overlay.get("youtube_vol_up") or "alt++"))
+        self.yt_vol_up.grid(row=6, column=1, sticky="w", pady=4)
+        ttk.Label(inner, text="громче этот трек, не донат и не громкость Windows", style="CardMuted.TLabel").grid(
+            row=6, column=2, sticky="w", padx=8
+        )
+
+        ttk.Label(inner, text="Alt −", style="Card.TLabel").grid(row=7, column=0, sticky="e", padx=(0, 8), pady=4)
+        self.yt_vol_down = self._entry(inner, 14)
+        self.yt_vol_down.insert(0, str(overlay.get("youtube_vol_down") or "alt+-"))
+        self.yt_vol_down.grid(row=7, column=1, sticky="w", pady=4)
+        ttk.Label(inner, text="тише этот трек", style="CardMuted.TLabel").grid(row=7, column=2, sticky="w", padx=8)
+
+        btns = ttk.Frame(inner)
+        btns.grid(row=8, column=1, sticky="w", pady=(10, 0))
+        ttk.Button(btns, text="Проверить выход", command=self._test_yt_device).pack(side="left")
+        ttk.Button(btns, text="Стоп трек", command=self.engine.media.stop).pack(side="left", padx=8)
+        inner.columnconfigure(1, weight=1)
+
+    def _refresh_yt_devices(self, keep: str | None = None) -> None:
+        wanted = keep if keep is not None else self._yt_device_id()
+        devices = list_audio_devices()
+        ids = {item[0] for item in devices}
+        if wanted and wanted not in ids:
+            devices.append((wanted, f"Сохранено: {wanted}"))
+        labels: list[str] = []
+        self._yt_device_ids = []
+        used: set[str] = set()
+        for dev_id, title in devices:
+            label = title
+            if label in used:
+                label = f"{title} [{dev_id[-18:]}]" if dev_id else title
+            used.add(label)
+            labels.append(label)
+            self._yt_device_ids.append(dev_id)
+        self.yt_device.configure(values=labels)
+        index = 0
+        if wanted in self._yt_device_ids:
+            index = self._yt_device_ids.index(wanted)
+        if labels:
+            self.yt_device.set(labels[index])
+
+    def _yt_device_id(self) -> str:
+        if not hasattr(self, "yt_device"):
+            return str((self.cfg.get("overlay") or {}).get("youtube_device") or "")
+        labels = list(self.yt_device.cget("values") or ())
+        current = self.yt_device.get()
+        if current in labels:
+            return self._yt_device_ids[labels.index(current)]
+        return ""
+
+    def _apply_yt_device(self) -> None:
+        device = self._yt_device_id()
+        self.cfg.setdefault("overlay", {})["youtube_device"] = device
+        self.engine.media.set_device(device)
+        self.log(f"музыка: устройство «{self.yt_device.get()}»")
+
+    def _on_yt_vol(self, _value: str | None = None) -> None:
+        vol = int(self.yt_vol.get())
+        self.cfg.setdefault("overlay", {})["youtube_volume"] = vol
+        self.engine.media.set_volume(vol)
+        if hasattr(self, "yt_vol_lbl"):
+            self.yt_vol_lbl.configure(text=f"{vol}%")
+
+    def _on_yt_vol_from_hotkey(self, vol: int) -> None:
+        if hasattr(self, "yt_vol"):
+            self.yt_vol.set(vol)
+        if hasattr(self, "yt_vol_lbl"):
+            self.yt_vol_lbl.configure(text=f"{vol}%")
+
+    def _test_yt_device(self) -> None:
+        self._collect()
+        self.engine.sync_media_settings()
+        self.engine.media.play_test(
+            int(self.cfg["overlay"].get("youtube_volume") or 80),
+            str(self.cfg["overlay"].get("youtube_device") or ""),
+        )
+        self.log("музыка: короткий писк в выбранные наушники. Если тишина — другое устройство или нет mpv.")
 
     def _open(self, url: str) -> None:
         webbrowser.open(url)
@@ -853,8 +1002,6 @@ class App(tk.Tk):
             "back": "Назад",
             "left": "Влево",
             "right": "Вправо",
-            "volume_up": "Громкость вверх",
-            "volume_down": "Громкость вниз",
         }
         for i, (key, title) in enumerate(labels.items(), start=1):
             ttk.Label(box, text=title).grid(row=i, column=0, sticky="e", padx=8, pady=4)
@@ -862,20 +1009,15 @@ class App(tk.Tk):
             entry.insert(0, keys.get(key, ""))
             entry.grid(row=i, column=1, sticky="w")
             self.key_entries[key] = entry
-        ttk.Label(box, text="Бросок гранаты под ноги").grid(row=11, column=0, sticky="e", padx=8, pady=4)
+        ttk.Label(box, text="Бросок гранаты под ноги").grid(row=9, column=0, sticky="e", padx=8, pady=4)
         entry = self._entry(box, 12)
         entry.insert(0, keys.get("nade_throw", "rbutton"))
-        entry.grid(row=11, column=1, sticky="w")
+        entry.grid(row=9, column=1, sticky="w")
         self.key_entries["nade_throw"] = entry
-        ttk.Label(box, text="Заголовок окна CS2").grid(row=12, column=0, sticky="e", padx=8, pady=10)
+        ttk.Label(box, text="Заголовок окна CS2").grid(row=10, column=0, sticky="e", padx=8, pady=10)
         self.window_title = self._entry(box, 28)
         self.window_title.insert(0, self.cfg["cs2"]["window_title"])
-        self.window_title.grid(row=12, column=1, sticky="w", pady=10)
-        ttk.Label(
-            box,
-            text="Громкость: по умолчанию Alt++ и Alt+−. Если у стримера numpad — поставь alt+add / alt+numminus.",
-            style="Muted.TLabel",
-        ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.window_title.grid(row=10, column=1, sticky="w", pady=10)
 
     def _build_voice(self) -> None:
         voice = self.cfg.setdefault("voice", {})
@@ -1023,7 +1165,7 @@ class App(tk.Tk):
         self.log(f"Файл лога: {LOG_PATH}")
         self.log("Автообновление: при старте и раз в 45 мин смотрит GitHub. Токены и видео не затирает. На стриме само окно не закрывает.")
         self.log("Чат со стримером: вкладка Голос + run-chat.bat. Текст читает системный голос Windows.")
-        self.log("Донат: сообщение читает голос Windows. YouTube из Trula играет в наушники (нужен mpv).")
+        self.log("Донат: сообщение читает голос Windows. YouTube из Trula играет стримеру в выбранные наушники (нужен mpv). Alt+ / Alt− — громкость этого трека.")
 
     def _collect(self) -> None:
         self.cfg["general"]["enabled"] = self.enabled_var.get()
@@ -1045,6 +1187,17 @@ class App(tk.Tk):
         self.cfg["overlay"]["ping_flash"] = self.overlay_ping.get() if hasattr(self, "overlay_ping") else True
         self.cfg["overlay"]["speak_message"] = self.speak_message.get() if hasattr(self, "speak_message") else True
         self.cfg["overlay"]["play_youtube"] = self.play_youtube.get() if hasattr(self, "play_youtube") else True
+        self.cfg["overlay"]["youtube_volume"] = int(self.yt_vol.get()) if hasattr(self, "yt_vol") else 80
+        self.cfg["overlay"]["youtube_volume_step"] = max(
+            1, min(25, int(self.yt_vol_step.get() or 5) if hasattr(self, "yt_vol_step") else 5)
+        )
+        self.cfg["overlay"]["youtube_device"] = self._yt_device_id()
+        self.cfg["overlay"]["youtube_vol_up"] = (
+            (self.yt_vol_up.get() if hasattr(self, "yt_vol_up") else "alt++").strip().lower() or "alt++"
+        )
+        self.cfg["overlay"]["youtube_vol_down"] = (
+            (self.yt_vol_down.get() if hasattr(self, "yt_vol_down") else "alt+-").strip().lower() or "alt+-"
+        )
         self.cfg["effects"]["flash"]["mode"] = self.flash_mode.get()
         self.cfg["effects"]["mouse_jerk"]["intensity"] = int(self.jerk_intensity.get() or 900)
         self.cfg["effects"]["nade_and_crouch"]["look_down_pixels"] = int(self.look_down.get() or 3200)
@@ -1076,8 +1229,6 @@ class App(tk.Tk):
             self.cfg["effects"][effect_id]["cooldown_sec"] = float(vars_["cooldown_sec"].get() or 0)
             if "duration_sec" in vars_:
                 self.cfg["effects"][effect_id]["duration_sec"] = float(vars_["duration_sec"].get() or 0)
-            if "steps" in vars_:
-                self.cfg["effects"][effect_id]["steps"] = int(vars_["steps"].get() or 1)
 
     def _save(self) -> None:
         try:
@@ -1085,6 +1236,7 @@ class App(tk.Tk):
             save_config(self.cfg)
             self.engine.guard.kill_switch = self.cfg["general"]["kill_switch"]
             self.engine.guard.panic_hotkey = self.cfg["general"]["panic_hotkey"]
+            self.engine.sync_media_settings()
             self.log("Настройки сохранены.")
             da = self.cfg["donationalerts"]
             if da.get("widget_token") or da.get("access_token"):

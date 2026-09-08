@@ -36,6 +36,10 @@ DEFAULTS: dict[str, Any] = {
         "speak_message": True,
         "play_youtube": True,
         "youtube_volume": 80,
+        "youtube_volume_step": 5,
+        "youtube_device": "",
+        "youtube_vol_up": "alt++",
+        "youtube_vol_down": "alt+-",
     },
     "donationalerts": {
         "access_token": "",
@@ -81,13 +85,9 @@ DEFAULTS: dict[str, Any] = {
             "back": "s",
             "left": "a",
             "right": "d",
-            "volume_up": "alt++",
-            "volume_down": "alt+-",
         },
     },
     "effects": {
-        "volume_down": {"enabled": True, "amount": 10, "cooldown_sec": 4, "steps": 3},
-        "volume_up": {"enabled": True, "amount": 20, "cooldown_sec": 4, "steps": 3},
         "flash": {
             "enabled": True,
             "amount": 100,
@@ -133,8 +133,6 @@ DEFAULTS: dict[str, Any] = {
 }
 
 EFFECT_ORDER = [
-    "volume_down",
-    "volume_up",
     "flash",
     "drop_weapon",
     "mouse_jerk",
@@ -145,8 +143,6 @@ EFFECT_ORDER = [
 ]
 
 EFFECT_TITLES = {
-    "volume_down": "Громкость вниз (Alt+−)",
-    "volume_up": "Громкость вверх (Alt++)",
     "flash": "Флешка на весь экран",
     "drop_weapon": "Дроп оружия",
     "mouse_jerk": "Срыв сенсы",
@@ -155,6 +151,18 @@ EFFECT_TITLES = {
     "kill_cs2": "Вылет CS2",
     "minecraft_takeover": "Minecraft летсплей",
 }
+
+
+def _drop_legacy(data: dict[str, Any]) -> dict[str, Any]:
+    effects = data.get("effects")
+    if isinstance(effects, dict):
+        effects.pop("volume_up", None)
+        effects.pop("volume_down", None)
+    keys = (data.get("cs2") or {}).get("keys")
+    if isinstance(keys, dict):
+        keys.pop("volume_up", None)
+        keys.pop("volume_down", None)
+    return data
 
 
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -182,7 +190,7 @@ def ensure_config() -> Path:
 def load_config() -> dict[str, Any]:
     ensure_config()
     raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    data = _merge(DEFAULTS, raw)
+    data = _drop_legacy(_merge(DEFAULTS, raw))
     if SECRETS_PATH.exists():
         secrets = json.loads(SECRETS_PATH.read_text(encoding="utf-8"))
         token = secrets.get("donationalerts_access_token", "")
@@ -205,7 +213,7 @@ def load_config() -> dict[str, Any]:
 
 
 def save_config(data: dict[str, Any]) -> None:
-    payload = deepcopy(data)
+    payload = _drop_legacy(deepcopy(data))
     secrets: dict[str, Any] = {}
     if SECRETS_PATH.exists():
         secrets = json.loads(SECRETS_PATH.read_text(encoding="utf-8"))

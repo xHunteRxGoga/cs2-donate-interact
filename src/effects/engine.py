@@ -22,7 +22,6 @@ from src.effects.cs2 import (
     kill_cs2,
     mouse_jerk,
     nade_and_crouch,
-    volume_nudge,
 )
 from src.effects.flash import FlashController
 from src.effects.input_win import InputGuard, foreground_title, is_admin, set_input_logger
@@ -31,7 +30,7 @@ from src.effects.toast import ToastController
 from src.effects.youtube_audio import YoutubeAudio
 from src.voice import Voice
 
-NO_GAME_EFFECTS = {"flash", "kill_cs2", "minecraft_takeover", "volume_up", "volume_down"}
+NO_GAME_EFFECTS = {"flash", "kill_cs2", "minecraft_takeover"}
 
 
 @dataclass(slots=True)
@@ -58,6 +57,7 @@ class EffectEngine:
         self.toast = ToastController(ui_call)
         self.takeover = TakeoverController(self.guard)
         self.media = YoutubeAudio(log)
+        self.on_youtube_volume: Callable[[int], None] | None = None
         self.paused = False
         self.busy = False
         self.current_effect = ""
@@ -69,17 +69,41 @@ class EffectEngine:
         self._worker = threading.Thread(target=self._loop, name="effects", daemon=True)
         self.guard.on_kill = self.emergency_stop
         self.guard.on_panic = self.panic
+        self.guard.on_vol_up = lambda: self.nudge_youtube(1)
+        self.guard.on_vol_down = lambda: self.nudge_youtube(-1)
 
     def start(self) -> None:
         cfg = self.get_config()
         self.guard.kill_switch = cfg["general"]["kill_switch"]
         self.guard.panic_hotkey = cfg["general"]["panic_hotkey"]
+        self.sync_media_settings()
         set_input_logger(self.log)
         self.guard.start()
         self._worker.start()
         self.log(f"Диагностика при старте: {diagnose_cs2(cfg, self.guard.hook_ok())}")
         if not is_admin():
             self.log("ВАЖНО: приложение без прав администратора. CS2 часто игнорирует G/мышь. Закрой и запусти run-admin.bat.")
+
+    def sync_media_settings(self) -> None:
+        overlay = self.get_config().get("overlay") or {}
+        self.guard.vol_up = str(overlay.get("youtube_vol_up") or "alt++")
+        self.guard.vol_down = str(overlay.get("youtube_vol_down") or "alt+-")
+        self.media.set_volume(int(overlay.get("youtube_volume") or 80))
+        self.media.set_device(str(overlay.get("youtube_device") or ""))
+
+    def nudge_youtube(self, direction: int) -> None:
+        overlay = self.get_config().setdefault("overlay", {})
+        step = max(1, min(25, int(overlay.get("youtube_volume_step") or 5)))
+        vol = self.media.nudge(direction * step)
+        overlay["youtube_volume"] = vol
+        callback = self.on_youtube_volume
+        if callback:
+            self.ui_call(lambda v=vol, cb=callback: cb(v))
+        now = time.time()
+        if now - getattr(self, "_yt_vol_log_at", 0) >= 0.35:
+            self._yt_vol_log_at = now
+            where = "трек" if self.media.playing() else "на следующий трек"
+            self.log(f"музыка: громкость {vol}% ({where})")
 
     def shutdown(self) -> None:
         self._stop = True
@@ -139,7 +163,11 @@ class EffectEngine:
             self.voice.say(spoken)
         url = donation.media_url or ""
         if overlay.get("play_youtube", True) and url and str(donation.source).startswith("trula"):
-            self.media.play(url, int(overlay.get("youtube_volume") or 80))
+            self.media.play(
+                url,
+                int(overlay.get("youtube_volume") or 80),
+                str(overlay.get("youtube_device") or ""),
+            )
 
     def _beep(self) -> None:
         try:
@@ -369,10 +397,6 @@ class EffectEngine:
             nade_and_crouch(cfg)
         elif effect_id == "kill_cs2":
             kill_cs2(cfg["cs2"]["process_name"])
-        elif effect_id == "volume_up":
-            volume_nudge(cfg, "up")
-        elif effect_id == "volume_down":
-            volume_nudge(cfg, "down")
         elif effect_id == "minecraft_takeover":
             self.takeover.run(
                 resolve_video_path(cfg),

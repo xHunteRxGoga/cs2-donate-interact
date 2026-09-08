@@ -21,7 +21,11 @@
     "ping_flash": true,
     "speak_message": true,
     "play_youtube": true,
-    "youtube_volume": 80
+    "youtube_volume": 80,
+    "youtube_volume_step": 5,
+    "youtube_device": "",
+    "youtube_vol_up": "alt++",
+    "youtube_vol_down": "alt+-"
   },
   "donationalerts": {
     "access_token": "",
@@ -65,24 +69,10 @@
       "forward": "w",
       "back": "s",
       "left": "a",
-      "right": "d",
-      "volume_up": "alt++",
-      "volume_down": "alt+-"
+      "right": "d"
     }
   },
   "effects": {
-    "volume_down": {
-      "enabled": true,
-      "amount": 10,
-      "cooldown_sec": 4,
-      "steps": 3
-    },
-    "volume_up": {
-      "enabled": true,
-      "amount": 20,
-      "cooldown_sec": 4,
-      "steps": 3
-    },
     "flash": {
       "enabled": true,
       "amount": 100,

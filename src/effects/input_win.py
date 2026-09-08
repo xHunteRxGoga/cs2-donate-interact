@@ -706,27 +706,45 @@ def parse_hotkey(combo: str) -> tuple[set[str], int]:
     return mods, vk_from_name(parts[-1])
 
 
+def _held_mods(flags: int) -> set[str]:
+    have: set[str] = set()
+    if bool(flags & LLKHF_ALTDOWN) or bool(user32.GetAsyncKeyState(VK_MENU) & 0x8000):
+        have.add("alt")
+    if user32.GetAsyncKeyState(VK_CONTROL) & 0x8000:
+        have.add("ctrl")
+    if user32.GetAsyncKeyState(VK_SHIFT) & 0x8000:
+        have.add("shift")
+    if (user32.GetAsyncKeyState(VK_LWIN) & 0x8000) or (user32.GetAsyncKeyState(VK_RWIN) & 0x8000):
+        have.add("win")
+    return have
+
+
 def hotkey_pressed(combo: str, vk_code: int, flags: int) -> bool:
     try:
         mods, vk = parse_hotkey(combo)
     except ValueError:
         return False
-    if vk_code != vk:
+    return vk_code == vk and _held_mods(flags) == mods
+
+
+def media_hotkey_pressed(combo: str, vk_code: int, flags: int) -> bool:
+    """Alt++ ловит и клавишу «= / +», и плюс на numpad. То же для минуса."""
+    raw = (combo or "").strip()
+    if not raw:
         return False
-    alt = bool(flags & LLKHF_ALTDOWN) or bool(user32.GetAsyncKeyState(VK_MENU) & 0x8000)
-    ctrl = bool(user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
-    shift = bool(user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
-    win = bool(user32.GetAsyncKeyState(VK_LWIN) & 0x8000) or bool(user32.GetAsyncKeyState(VK_RWIN) & 0x8000)
-    have = set()
-    if alt:
-        have.add("alt")
-    if ctrl:
-        have.add("ctrl")
-    if shift:
-        have.add("shift")
-    if win:
-        have.add("win")
-    return have == mods
+    try:
+        mods, vk = parse_hotkey(combo)
+    except ValueError:
+        return False
+    if _held_mods(flags) != mods:
+        return False
+    if vk_code == vk:
+        return True
+    if vk in {VK_OEM_PLUS, VK_ADD} and vk_code in {VK_OEM_PLUS, VK_ADD}:
+        return True
+    if vk in {VK_OEM_MINUS, VK_SUBTRACT} and vk_code in {VK_OEM_MINUS, VK_SUBTRACT}:
+        return True
+    return False
 
 
 class InputGuard:
@@ -739,8 +757,13 @@ class InputGuard:
         self.block_all = False
         self.kill_switch = "alt+5"
         self.panic_hotkey = "ctrl+alt+5"
+        self.vol_up = "alt++"
+        self.vol_down = "alt+-"
         self.on_kill: Callable[[], None] | None = None
         self.on_panic: Callable[[], None] | None = None
+        self.on_vol_up: Callable[[], None] | None = None
+        self.on_vol_down: Callable[[], None] | None = None
+        self._vol_at = 0.0
         self._hook = None
         self._proc = None
         self._thread: threading.Thread | None = None
@@ -784,6 +807,13 @@ class InputGuard:
     def set_block_all(self, value: bool) -> None:
         with self._lock:
             self.block_all = value
+
+    def _fire_volume(self, fn: Callable[[], None]) -> None:
+        now = time.time()
+        if now - self._vol_at < 0.07:
+            return
+        self._vol_at = now
+        threading.Thread(target=fn, daemon=True).start()
 
     def start(self) -> None:
         if self._running:
@@ -832,6 +862,14 @@ class InputGuard:
             if is_down and hotkey_pressed(self.panic_hotkey, info.vkCode, info.flags):
                 if self.on_panic:
                     threading.Thread(target=self.on_panic, daemon=True).start()
+                return 1
+            if self.on_vol_up and media_hotkey_pressed(self.vol_up, info.vkCode, info.flags):
+                if is_down:
+                    self._fire_volume(self.on_vol_up)
+                return 1
+            if self.on_vol_down and media_hotkey_pressed(self.vol_down, info.vkCode, info.flags):
+                if is_down:
+                    self._fire_volume(self.on_vol_down)
                 return 1
             # Не трогаем Ctrl+C/V/X/A и ввод в нашем окне — иначе нельзя вставить ссылку.
             ctrl = bool(user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
