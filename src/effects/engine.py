@@ -13,6 +13,7 @@ except ImportError:
 
 from src.config import EFFECT_ORDER, EFFECT_TITLES, get_effect, resolve_video_path
 from src.donations.models import Donation
+from src.donations.parse import speech_text
 from src.effects.cs2 import (
     diagnose_cs2,
     drop_weapon,
@@ -26,6 +27,8 @@ from src.effects.flash import FlashController
 from src.effects.input_win import InputGuard, foreground_title, is_admin, set_input_logger
 from src.effects.takeover import TakeoverController
 from src.effects.toast import ToastController
+from src.effects.youtube_audio import YoutubeAudio
+from src.voice import Voice
 
 
 @dataclass(slots=True)
@@ -36,14 +39,22 @@ class Job:
 
 
 class EffectEngine:
-    def __init__(self, get_config: Callable[[], dict[str, Any]], log: Callable[[str], None], ui_call: Callable[..., None]) -> None:
+    def __init__(
+        self,
+        get_config: Callable[[], dict[str, Any]],
+        log: Callable[[str], None],
+        ui_call: Callable[..., None],
+        voice: Voice | None = None,
+    ) -> None:
         self.get_config = get_config
         self.log = log
         self.ui_call = ui_call
+        self.voice = voice
         self.guard = InputGuard()
         self.flash = FlashController(ui_call)
         self.toast = ToastController(ui_call)
         self.takeover = TakeoverController(self.guard)
+        self.media = YoutubeAudio(log)
         self.paused = False
         self.busy = False
         self.current_effect = ""
@@ -82,6 +93,7 @@ class EffectEngine:
         self._clear_queue()
         self.flash.cancel()
         self.takeover.cancel()
+        self.media.stop()
         self.toast.cancel()
         self.guard.clear_blocked_keys()
         self.guard.set_block_all(False)
@@ -112,6 +124,19 @@ class EffectEngine:
             threading.Thread(target=self._beep, daemon=True).start()
         if overlay.get("ping_flash", True) and effect_id != "flash":
             threading.Thread(target=lambda: self.flash.ping(0.45), daemon=True).start()
+        self._donation_media(donation)
+
+    def _donation_media(self, donation: Donation) -> None:
+        cfg = self.get_config()
+        overlay = cfg.get("overlay") or {}
+        spoken = speech_text(donation.message)
+        if overlay.get("speak_message", True) and spoken and self.voice:
+            self.voice.set_volume(int((cfg.get("voice") or {}).get("volume") or 80))
+            self.log(f"озвучка доната: {spoken}")
+            self.voice.say(spoken)
+        url = donation.media_url or ""
+        if overlay.get("play_youtube", True) and url and str(donation.source).startswith("trula"):
+            self.media.play(url, int(overlay.get("youtube_volume") or 80))
 
     def _beep(self) -> None:
         try:

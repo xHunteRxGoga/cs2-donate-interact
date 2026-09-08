@@ -18,6 +18,9 @@ BRANCH = "main"
 API_COMMIT = f"https://api.github.com/repos/{REPO}/commits/{BRANCH}"
 ZIP_URL = f"https://github.com/{REPO}/archive/refs/heads/{BRANCH}.zip"
 REVISION_PATH = ROOT / ".app_revision"
+NOTICE_PATH = ROOT / ".update_ok"
+BANNER_PATH = ROOT / ".shown_banner"
+BANNER = "2026-09-donation-tts-media"
 UA = {"User-Agent": "cs2-donate-interact-updater", "Accept": "application/vnd.github+json"}
 CHECK_EVERY_SEC = 45 * 60
 
@@ -25,6 +28,8 @@ KEEP_ROOT = {
     "config.json",
     "secrets.json",
     ".app_revision",
+    ".update_ok",
+    ".shown_banner",
     "logs",
     ".venv",
     "venv",
@@ -55,6 +60,32 @@ def read_sha() -> str:
 
 def write_sha(sha: str) -> None:
     REVISION_PATH.write_text(sha.strip() + "\n", encoding="utf-8")
+
+
+def mark_updated() -> None:
+    NOTICE_PATH.write_text("ok\n", encoding="utf-8")
+
+
+def consume_success_notice() -> bool:
+    show = False
+    if NOTICE_PATH.exists():
+        show = True
+        try:
+            NOTICE_PATH.unlink()
+        except OSError:
+            pass
+    shown = ""
+    try:
+        shown = BANNER_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    if shown != BANNER:
+        show = True
+        try:
+            BANNER_PATH.write_text(BANNER + "\n", encoding="utf-8")
+        except OSError:
+            pass
+    return show
 
 
 def is_git_checkout() -> bool:
@@ -159,6 +190,7 @@ def _apply_git(remote: str, note) -> UpdateResult:
     if new != old:
         _wipe_pycache()
         _pip_install(note)
+        mark_updated()
         return UpdateResult("updated", f"подтянул GitHub {new[:7]}", new, changed=True)
     return UpdateResult("current", f"уже последняя версия {new[:7]}", new)
 
@@ -185,6 +217,7 @@ def _apply_zip(remote: str, note) -> UpdateResult:
     write_sha(remote)
     _wipe_pycache()
     _pip_install(note)
+    mark_updated()
     return UpdateResult("updated", f"поставил GitHub {remote[:7]} ({copied} файлов)", remote, changed=True)
 
 

@@ -19,3 +19,5 @@ assets/*.mov
 dist/
 build/
 .app_revision
+.update_ok
+.shown_banner

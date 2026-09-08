@@ -41,6 +41,32 @@ _NAME_KEYS = (
 
 _MESSAGE_KEYS = ("message", "comment", "text", "msg", "donation_message")
 
+_MEDIA_KEYS = (
+    "url",
+    "link",
+    "media",
+    "media_url",
+    "mediaUrl",
+    "video",
+    "video_url",
+    "videoUrl",
+    "youtube",
+    "youtube_url",
+    "youtubeUrl",
+    "source_url",
+    "track_url",
+    "song_url",
+    "clip",
+    "content",
+    "videoId",
+    "video_id",
+)
+
+_YT_RE = re.compile(
+    r"(?i)(?:https?://)?(?:www\.)?(?:music\.)?(?:youtube\.com/(?:watch\?[^ \t\n]*v=|embed/|shorts/|live/)|youtu\.be/)([\w-]{11})"
+)
+_YT_ID_RE = re.compile(r"^[\w-]{11}$")
+
 _ID_KEYS = ("id", "donation_id", "alert_id", "transaction_id", "uuid", "event_id")
 
 
@@ -183,7 +209,48 @@ def iter_donation_dicts(payload) -> list[dict]:
 
 def _looks_like_donation(payload: dict) -> bool:
     keys = set(payload)
-    return any(key in keys for key in (*_AMOUNT_KEYS, *_NAME_KEYS, "_is_test_alert", *_MESSAGE_KEYS))
+    return any(key in keys for key in (*_AMOUNT_KEYS, *_NAME_KEYS, "_is_test_alert", *_MESSAGE_KEYS, *_MEDIA_KEYS))
+
+
+def extract_youtube_url(value) -> str:
+    if value is None or isinstance(value, (int, float, bool)):
+        return ""
+    if isinstance(value, dict):
+        for key in _MEDIA_KEYS:
+            found = _youtube_from_field(key, value.get(key))
+            if found:
+                return found
+        for nested in value.values():
+            if isinstance(nested, (dict, list, str)):
+                found = extract_youtube_url(nested)
+                if found:
+                    return found
+        return ""
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            found = extract_youtube_url(item)
+            if found:
+                return found
+        return ""
+    match = _YT_RE.search(str(value))
+    if match:
+        return f"https://www.youtube.com/watch?v={match.group(1)}"
+    return ""
+
+
+def _youtube_from_field(key: str, value) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, str) and key in {"videoId", "video_id"} and _YT_ID_RE.match(value.strip()):
+        return f"https://www.youtube.com/watch?v={value.strip()}"
+    return extract_youtube_url(value)
+
+
+def speech_text(message: str) -> str:
+    raw = " ".join((message or "").split())
+    raw = _YT_RE.sub(" ", raw)
+    raw = re.sub(r"https?://\S+", " ", raw, flags=re.I)
+    return " ".join(raw.split())
 
 
 def donation_from_payload(payload: dict, source: str) -> Donation | None:
@@ -225,6 +292,7 @@ def donation_from_payload(payload: dict, source: str) -> Donation | None:
         if value not in (None, ""):
             message = str(value)
             break
+    media_url = extract_youtube_url(merged) or extract_youtube_url(message)
     donation_id = ""
     for key in _ID_KEYS:
         value = merged.get(key)
@@ -233,9 +301,9 @@ def donation_from_payload(payload: dict, source: str) -> Donation | None:
             break
     is_test = truthy(merged.get("_is_test_alert") or merged.get("is_test") or merged.get("test"))
     alert_type = str(merged.get("alert_type") or merged.get("type") or "1").lower()
-    if alert_type in {"follow", "subscription", "subscriber", "raid", "host", "cheer", "media", "music"} and amount <= 0:
+    if alert_type in {"follow", "subscription", "subscriber", "raid", "host", "cheer"} and amount <= 0 and not media_url:
         return None
-    if amount <= 0 and not is_test:
+    if amount <= 0 and not is_test and not media_url:
         return None
     return Donation(
         username=username,
@@ -245,6 +313,7 @@ def donation_from_payload(payload: dict, source: str) -> Donation | None:
         source=source + ("-test" if is_test else ""),
         donation_id=donation_id,
         is_test=is_test,
+        media_url=media_url,
     )
 
 

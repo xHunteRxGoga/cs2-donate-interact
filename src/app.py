@@ -16,7 +16,7 @@ from src.donations.trula import TrulaClient
 from src.donations.webhook import WebhookServer
 from src.effects.cs2 import is_cs2_running
 from src.effects.engine import EffectEngine
-from src.updater import CHECK_EVERY_SEC, check_and_apply, restart_process
+from src.updater import CHECK_EVERY_SEC, check_and_apply, consume_success_notice, restart_process
 from src.voice import Voice
 from src.voice_link import VoiceLink, normalize_ws_url
 from src.theme import (
@@ -65,13 +65,13 @@ class App(tk.Tk):
         self.minsize(960, 640)
         self.configure(bg=BG)
         self.cfg = load_config()
-        self.engine = EffectEngine(lambda: self.cfg, self.log, self.ui_call)
+        self.voice = Voice(self.log)
+        self.voice.set_volume(int((self.cfg.get("voice") or {}).get("volume") or 80))
+        self.engine = EffectEngine(lambda: self.cfg, self.log, self.ui_call, voice=self.voice)
         self.da = DonationAlertsClient(self._on_donation, self.log)
         self.dp = DonatePayClient(self._on_donation, self.log)
         self.trula = TrulaClient(self._on_donation, self.log)
         self.webhook = WebhookServer(self._on_donation, self.log)
-        self.voice = Voice(self.log)
-        self.voice.set_volume(int((self.cfg.get("voice") or {}).get("volume") or 80))
         self.voice_link = VoiceLink(self._on_voice_say, self.log, role="streamer")
         self._quiet_log_until: dict[str, float] = {}
         self._build_style()
@@ -82,6 +82,7 @@ class App(tk.Tk):
         self._start_services()
         self._start_updater()
         self.after(1000, self._tick)
+        self.after(700, self._show_update_ok)
 
     def ui_call(self, fn) -> None:
         self.after(0, fn)
@@ -565,9 +566,13 @@ class App(tk.Tk):
         ttk.Checkbutton(grid, text="Табличка на каждый донат", variable=self.overlay_enabled).grid(row=3, column=0, sticky="w", pady=4)
         ttk.Checkbutton(grid, text="Звук при донате", variable=self.overlay_beep).grid(row=4, column=0, sticky="w", pady=4)
         ttk.Checkbutton(grid, text="Короткая вспышка, если табличка под игрой", variable=self.overlay_ping).grid(row=5, column=0, sticky="w", pady=4)
+        self.speak_message = tk.BooleanVar(value=bool(overlay.get("speak_message", True)))
+        self.play_youtube = tk.BooleanVar(value=bool(overlay.get("play_youtube", True)))
+        ttk.Checkbutton(grid, text="Озвучивать сообщение доната голосом Windows", variable=self.speak_message).grid(row=6, column=0, sticky="w", pady=4)
+        ttk.Checkbutton(grid, text="Играть YouTube из доната Trula в наушники", variable=self.play_youtube).grid(row=7, column=0, sticky="w", pady=4)
         self.auto_update = tk.BooleanVar(value=bool(g.get("auto_update", True)))
-        ttk.Checkbutton(grid, text="Автообновление с GitHub", variable=self.auto_update).grid(row=6, column=0, sticky="w", pady=4)
-        ttk.Button(grid, text="Проверить сейчас", command=self._check_update_now).grid(row=7, column=0, sticky="w", pady=6)
+        ttk.Checkbutton(grid, text="Автообновление с GitHub", variable=self.auto_update).grid(row=8, column=0, sticky="w", pady=4)
+        ttk.Button(grid, text="Проверить сейчас", command=self._check_update_now).grid(row=9, column=0, sticky="w", pady=6)
 
         ttk.Label(grid, text="Режим суммы").grid(row=0, column=1, sticky="e", padx=8)
         self.amount_mode = ttk.Combobox(grid, values=["exact", "threshold"], state="readonly", width=14)
@@ -1003,6 +1008,7 @@ class App(tk.Tk):
         self.log(f"Файл лога: {LOG_PATH}")
         self.log("Автообновление: при старте и раз в 45 мин смотрит GitHub. Токены и видео не затирает. На стриме само окно не закрывает.")
         self.log("Чат со стримером: вкладка Голос + run-chat.bat. Текст читает системный голос Windows.")
+        self.log("Донат: сообщение читает голос Windows. YouTube из Trula играет в наушники (нужен mpv).")
 
     def _collect(self) -> None:
         self.cfg["general"]["enabled"] = self.enabled_var.get()
@@ -1022,6 +1028,8 @@ class App(tk.Tk):
         self.cfg["overlay"]["enabled"] = self.overlay_enabled.get() if hasattr(self, "overlay_enabled") else True
         self.cfg["overlay"]["beep"] = self.overlay_beep.get() if hasattr(self, "overlay_beep") else True
         self.cfg["overlay"]["ping_flash"] = self.overlay_ping.get() if hasattr(self, "overlay_ping") else True
+        self.cfg["overlay"]["speak_message"] = self.speak_message.get() if hasattr(self, "speak_message") else True
+        self.cfg["overlay"]["play_youtube"] = self.play_youtube.get() if hasattr(self, "play_youtube") else True
         self.cfg["effects"]["flash"]["mode"] = self.flash_mode.get()
         self.cfg["effects"]["mouse_jerk"]["intensity"] = int(self.jerk_intensity.get() or 900)
         self.cfg["effects"]["nade_and_crouch"]["look_down_pixels"] = int(self.look_down.get() or 3200)
@@ -1471,6 +1479,29 @@ class App(tk.Tk):
                 self.btn_restart_update.pack_forget()
         if detail and status not in {"current", "checking"}:
             self.log(f"обновление: {detail}")
+        if status == "updated" and not getattr(self, "_restarting_update", False):
+            self._restarting_update = True
+            self.log("Обновление скачано. Перезапуск, чтобы подхватить код…")
+            self.after(1500, self._restart_when_idle)
+
+    def _restart_when_idle(self) -> None:
+        if self.engine.busy:
+            self.after(1000, self._restart_when_idle)
+            return
+        self._restart_for_update()
+
+    def _show_update_ok(self) -> None:
+        try:
+            show = consume_success_notice()
+        except Exception:
+            return
+        if not show:
+            return
+        self.log("Обновление прошло успешно")
+        try:
+            self.engine.toast.show("GitHub", "Обновление прошло успешно", "GH", 6.0, wait=False)
+        except Exception:
+            pass
 
     def _start_updater(self) -> None:
         self._update_pending = False

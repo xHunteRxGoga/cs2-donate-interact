@@ -18,7 +18,10 @@
     "enabled": true,
     "duration_sec": 5.5,
     "beep": true,
-    "ping_flash": true
+    "ping_flash": true,
+    "speak_message": true,
+    "play_youtube": true,
+    "youtube_volume": 80
   },
   "donationalerts": {
     "access_token": "",

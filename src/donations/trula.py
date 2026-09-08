@@ -5,14 +5,13 @@ import json
 import threading
 import time
 from typing import Callable
-from urllib.parse import urlparse
 
 import httpx
 import websockets
 
 from src.donations.linkstate import LinkState
 from src.donations.models import Donation
-from src.donations.parse import donation_from_payload, extract_token, iter_donation_dicts, unwrap_payload
+from src.donations.parse import donation_from_payload, extract_token, extract_youtube_url, iter_donation_dicts, unwrap_payload
 
 
 TRULA_EVENTS = "https://trula.io/api/v1/widget/panel/events"
@@ -109,18 +108,19 @@ class TrulaClient:
         self.on_status("Trula: панель подключена, слушаю события")
         stop = _GenStop(self, gen)
         await asyncio.gather(
-            self._poll_events(token, gen),
+            self._poll_list(TRULA_EVENTS, token, gen),
+            self._poll_list(TRULA_ORDERS, token, gen),
             self._listen_ws(token, stop),
             return_exceptions=True,
         )
 
-    async def _poll_events(self, token: str, gen: int) -> None:
+    async def _poll_list(self, url: str, token: str, gen: int) -> None:
         headers = {"token": token, "Accept": "application/json", "Origin": "https://trula.io"}
         bootstrap = True
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
             while self._alive(gen):
                 try:
-                    resp = await client.get(TRULA_EVENTS, headers=headers)
+                    resp = await client.get(url, headers=headers)
                     if resp.status_code < 400:
                         payload = resp.json()
                         rows = payload.get("data") if isinstance(payload, dict) else payload
@@ -140,7 +140,7 @@ class TrulaClient:
                             self._emit(row)
                         bootstrap = False
                     else:
-                        self._note(f"Trula events HTTP {resp.status_code}")
+                        self._note(f"Trula {url.rsplit('/', 1)[-1]} HTTP {resp.status_code}")
                 except Exception as exc:
                     self._note(f"Trula опрос: {exc}")
                 await asyncio.sleep(3)
@@ -180,12 +180,27 @@ class TrulaClient:
             await asyncio.sleep(4)
 
     def _emit(self, payload: dict) -> None:
+        if not isinstance(payload, dict):
+            return
         item = donation_from_payload(payload, "trula")
         if item is None:
-            if str(payload.get("type") or "").lower() not in {"donate", "donation", ""}:
+            url = extract_youtube_url(payload)
+            if not url:
+                kind = str(payload.get("type") or "").lower()
+                if kind not in {"donate", "donation", "music", "media", "order", ""}:
+                    return
+                self._note(f"Trula: пакет без суммы {str(payload)[:180]}")
                 return
-            self._note(f"Trula: пакет без суммы {str(payload)[:180]}")
-            return
+            name = str(payload.get("username") or payload.get("name") or payload.get("nickname") or "Аноним")
+            item = Donation(
+                username=name,
+                amount=0,
+                currency="RUB",
+                message=str(payload.get("message") or payload.get("comment") or ""),
+                source="trula",
+                donation_id=str(payload.get("id") or url),
+                media_url=url,
+            )
         if item.donation_id:
             if item.donation_id in self._seen:
                 return

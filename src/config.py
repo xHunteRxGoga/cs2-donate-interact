@@ -33,6 +33,9 @@ DEFAULTS: dict[str, Any] = {
         "duration_sec": 5.5,
         "beep": True,
         "ping_flash": True,
+        "speak_message": True,
+        "play_youtube": True,
+        "youtube_volume": 80,
     },
     "donationalerts": {
         "access_token": "",

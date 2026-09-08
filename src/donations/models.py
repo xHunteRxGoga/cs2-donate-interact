@@ -12,3 +12,4 @@ class Donation:
     source: str = "manual"
     donation_id: str = ""
     is_test: bool = False
+    media_url: str = ""
