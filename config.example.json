@@ -14,6 +14,10 @@
     "panic_hotkey": "ctrl+alt+5",
     "auto_update": true
   },
+  "access": {
+    "enabled": true,
+    "server": "http://YOUR_SERVER_IP:8767"
+  },
   "overlay": {
     "enabled": true,
     "duration_sec": 5.5,

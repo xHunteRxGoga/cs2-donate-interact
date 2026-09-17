@@ -284,13 +284,12 @@ class DonationAlertsClient:
             return
         stop = _GenStop(self, gen)
         urls = [
-            f"{DA_API}/alerts/donations",
             f"https://www.donationalerts.com/widget/lastdonations?alert_type=1&limit=20&token={token}",
         ]
-        headers_list = [
-            {"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            {"Accept": "application/json, text/html"},
-        ]
+        headers_list = [{"Accept": "application/json, text/html"}]
+        if self.access_token:
+            urls.insert(0, f"{DA_API}/alerts/donations")
+            headers_list.insert(0, {"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"})
         bootstrap: dict[str, set[str]] = {}
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
             while not stop.is_set():

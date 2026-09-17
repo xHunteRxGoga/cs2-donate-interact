@@ -58,6 +58,7 @@ class EffectEngine:
         self.takeover = TakeoverController(self.guard)
         self.media = YoutubeAudio(log)
         self.on_youtube_volume: Callable[[int], None] | None = None
+        self.access_check: Callable[[], bool] = lambda: True
         self.paused = False
         self.busy = False
         self.current_effect = ""
@@ -177,6 +178,9 @@ class EffectEngine:
             pass
 
     def enqueue_donation(self, donation: Donation) -> None:
+        if not self.access_check():
+            self.log("донат не обработан: нет оплаченного доступа к программе.")
+            return
         cfg = self.get_config()
         effect_id = self._match_effect(cfg, donation)
         self.announce_donation(donation, effect_id)
@@ -189,6 +193,9 @@ class EffectEngine:
         self.enqueue_effect(effect_id, donation, reason)
 
     def enqueue_effect(self, effect_id: str, donation: Donation | None = None, reason: str = "тест") -> None:
+        if not self.access_check():
+            self.log(f"{EFFECT_TITLES.get(effect_id, effect_id)}: нет оплаченного доступа.")
+            return
         cfg = self.get_config()
         if self.paused and reason != "тест":
             return

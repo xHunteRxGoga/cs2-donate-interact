@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
+from src.access_client import AccessClient
 from src.config import EFFECT_ORDER, EFFECT_TITLES, load_config, save_config
 from src.debuglog import LOG_PATH, read_tail, write as write_log
 from src.donations.donatepay import DonatePayClient
@@ -59,9 +60,13 @@ EFFECT_HINTS = {
 
 
 class App(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self, access: AccessClient | None = None) -> None:
         super().__init__()
-        self.title("CS2 Donate Interact")
+        self.access = access
+        title = "CS2 Donate Interact"
+        if access and access.user:
+            title += f" — {access.user.username}"
+        self.title(title)
         self.geometry("1120x780")
         self.minsize(960, 640)
         self.configure(bg=BG)
@@ -70,6 +75,7 @@ class App(tk.Tk):
         self.voice.set_volume(int((self.cfg.get("voice") or {}).get("volume") or 80))
         self.engine = EffectEngine(lambda: self.cfg, self.log, self.ui_call, voice=self.voice)
         self.engine.on_youtube_volume = self._on_yt_vol_from_hotkey
+        self.engine.access_check = self._access_ok
         self.da = DonationAlertsClient(self._on_donation, self.log)
         self.dp = DonatePayClient(self._on_donation, self.log)
         self.trula = TrulaClient(self._on_donation, self.log)
@@ -80,14 +86,58 @@ class App(tk.Tk):
         self._build()
         self._dark_titlebar()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._apply_access_gate()
         self.engine.start()
         self._start_services()
         self._start_updater()
         self.after(1000, self._tick)
         self.after(700, self._show_update_ok)
+        if self.access:
+            self.after(300_000, self._refresh_access)
 
     def ui_call(self, fn) -> None:
         self.after(0, fn)
+
+    def _access_ok(self) -> bool:
+        if not self.access:
+            return True
+        return self.access.access_active
+
+    def _apply_access_gate(self) -> None:
+        if not hasattr(self, "status_access"):
+            return
+        if not self.access:
+            fill = CHIP_BG
+            self.status_access.configure(text="доступ: без входа", fg=MUTED, bg=fill)
+            self.status_access_chip.configure(bg=fill)
+            return
+        if self._access_ok():
+            self._access_warned = False
+            fill = CHIP_FILL["live"]
+            self.status_access.configure(text="доступ: активен", fg=OK, bg=fill)
+            self.status_access_chip.configure(bg=fill)
+            return
+        fill = CHIP_FILL["bad"]
+        self.status_access.configure(text="доступ: нет", fg=BAD, bg=fill)
+        self.status_access_chip.configure(bg=fill)
+        if hasattr(self, "enabled_var"):
+            self.engine.paused = True
+            self.enabled_var.set(False)
+            self.cfg["general"]["enabled"] = False
+        if getattr(self, "_access_warned", False):
+            return
+        self._access_warned = True
+        until = ""
+        if self.access and self.access.user and self.access.user.access_until:
+            until = f" (был до {self.access.user.access_until})"
+        self.log(f"Эффекты и донаты выключены: нет оплаченного доступа{until}.")
+
+    def _refresh_access(self) -> None:
+        if not self.access:
+            return
+        self.access.refresh()
+        self._apply_access_gate()
+        self.after(300_000, self._refresh_access)
 
     def log(self, text: str) -> None:
         noisy = any(
@@ -268,6 +318,7 @@ class App(tk.Tk):
         chips = ttk.Frame(head)
         chips.pack(side="right")
         self.status_upd_chip, self.status_upd = self._chip(chips, "GH: …")
+        self.status_access_chip, self.status_access = self._chip(chips, "доступ: …")
         self.status_sys_chip, self.status_sys = self._chip(chips, "эффекты: вкл")
         self.status_cs2_chip, self.status_cs2 = self._chip(chips, "CS2: —")
         self.status_trula_chip, self.status_trula = self._chip(chips, "Trula: нет")
@@ -276,6 +327,7 @@ class App(tk.Tk):
         self.status_voice_chip, self.status_voice = self._chip(chips, "голос: нет")
         self.status_sys.configure(fg=OK)
         self.status_upd_chip.pack(side="right", padx=(6, 0))
+        self.status_access_chip.pack(side="right", padx=6)
         self.status_sys_chip.pack(side="right", padx=6)
         self.status_cs2_chip.pack(side="right", padx=6)
         self.status_trula_chip.pack(side="right", padx=6)
@@ -893,10 +945,12 @@ class App(tk.Tk):
         da = self.cfg["donationalerts"]
         box = ttk.Frame(parent)
         box.pack(fill="x", pady=8)
-        ttk.Label(box, text="Самый простой путь: секретный токен виджета из кабинета DonationAlerts.").grid(row=0, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Label(box, text="Достаточно одного поля: секретный токен или ссылка виджета DonationAlerts.").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=4
+        )
         ttk.Label(
             box,
-            text="Кабинет → Настройки / Оповещения → «Секретный токен» или ссылка виджета с token=. Потом «Привязать аккаунт».",
+            text="Кабинет → «Секретный токен» (или ссылка с token=) → вставь сюда → «Сохранить и проверить связь».",
             style="Muted.TLabel",
         ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
         ttk.Button(box, text="Открыть кабинет DonationAlerts", command=lambda: self._open_cabinet("da")).grid(row=2, column=1, sticky="w", pady=4)
@@ -937,8 +991,12 @@ class App(tk.Tk):
         dp = self.cfg["donatepay"]
         box = ttk.Frame(parent)
         box.pack(fill="x", pady=8)
-        ttk.Label(box, text="Нужны два куска из кабинета DonatePay: API-ключ и ссылка виджета оповещений.").grid(row=0, column=0, columnspan=3, sticky="w", pady=4)
-        ttk.Label(box, text="API даёт историю, виджет даёт донат сразу. Лучше вставить оба и нажать «Привязать аккаунт».", style="Muted.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        ttk.Label(box, text="Проще всего: только ссылка виджета — донаты приходят сразу.").grid(row=0, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Label(
+            box,
+            text="API-ключ (donatepay.ru/page/api) — необязательно, подстраховка опросом раз в 20 сек. Можно вставить одно или оба.",
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
         ttk.Button(box, text="Открыть кабинет DonatePay", command=lambda: self._open_cabinet("dp")).grid(row=2, column=1, sticky="w", pady=4)
         self.dp_enabled = tk.BooleanVar(value=bool(dp.get("enabled", True)))
         ttk.Checkbutton(box, text="Слушать DonatePay", variable=self.dp_enabled).grid(row=3, column=1, sticky="w", pady=4)
@@ -1343,10 +1401,11 @@ class App(tk.Tk):
             self.cfg["trula"]["enabled"] = True
             self._reconnect_trula()
             client = self.trula
-        self.log(f"{title}: проверяю связь, жду до 12 сек…")
+        wait_sec = 20 if kind == "dp" else 12
+        self.log(f"{title}: проверяю связь, жду до {wait_sec} сек…")
 
         def wait() -> None:
-            deadline = time.time() + 12
+            deadline = time.time() + (20 if kind == "dp" else 12)
             while time.time() < deadline:
                 if client.link.state == "live" or client.connected:
                     def ok() -> None:
@@ -1369,7 +1428,7 @@ class App(tk.Tk):
             def late() -> None:
                 messagebox.showwarning(
                     title,
-                    "За 12 секунд не получил «подключено».\n\n"
+                    f"За {20 if kind == 'dp' else 12} секунд не получил «подключено».\n\n"
                     f"Сейчас: {detail}\n\n"
                     "Чаще всего вставлен не тот токен/ссылка. Проверь лог и вставь заново.",
                 )
@@ -1436,6 +1495,8 @@ class App(tk.Tk):
                 self.log("Голос: включён, но нет адреса или ключа. Вкладка Голос.")
 
     def _on_voice_say(self, who: str, text: str) -> None:
+        if not self._access_ok():
+            return
         voice = self.cfg.get("voice") or {}
         self.log(f"чат → озвучка: {who}: {text}")
         self.voice.set_volume(int(voice.get("volume") or 80))
@@ -1528,6 +1589,12 @@ class App(tk.Tk):
         self.cfg["general"]["enabled"] = False
 
     def _resume(self) -> None:
+        if not self._access_ok():
+            messagebox.showinfo(
+                "Доступ",
+                "Эффекты недоступны без оплаченного доступа. Зарегистрируйся и попроси админа выдать срок.",
+            )
+            return
         self.engine.paused = False
         self.enabled_var.set(True)
         self.cfg["general"]["enabled"] = True
@@ -1762,6 +1829,6 @@ class App(tk.Tk):
         self.destroy()
 
 
-def run() -> None:
-    app = App()
+def run(access: AccessClient | None = None) -> None:
+    app = App(access)
     app.mainloop()
