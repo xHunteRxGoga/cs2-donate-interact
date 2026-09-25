@@ -8,10 +8,6 @@ env/
 .env
 config.json
 secrets.json
-.session.json
-server/access.db
-server/admin.secret
-**/admin.secret
 assets/*.mp4
 assets/*.mkv
 assets/*.webm

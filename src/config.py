@@ -2,23 +2,15 @@ from __future__ import annotations
 
 import json
 import shutil
-import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 
-def _app_root() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent.parent
-
-
-ROOT = _app_root()
+ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE_PATH = ROOT / "config.example.json"
 CONFIG_PATH = ROOT / "config.json"
 SECRETS_PATH = ROOT / "secrets.json"
-SESSION_PATH = ROOT / ".session.json"
 
 DEFAULTS: dict[str, Any] = {
     "general": {
@@ -35,10 +27,6 @@ DEFAULTS: dict[str, Any] = {
         "kill_switch": "alt+5",
         "panic_hotkey": "ctrl+alt+5",
         "auto_update": True,
-    },
-    "access": {
-        "enabled": True,
-        "server": "http://127.0.0.1:8767",
     },
     "overlay": {
         "enabled": True,

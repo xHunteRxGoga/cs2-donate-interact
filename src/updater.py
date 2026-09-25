@@ -20,7 +20,7 @@ ZIP_URL = f"https://github.com/{REPO}/archive/refs/heads/{BRANCH}.zip"
 REVISION_PATH = ROOT / ".app_revision"
 NOTICE_PATH = ROOT / ".update_ok"
 BANNER_PATH = ROOT / ".shown_banner"
-BANNER = "2026-09-access-accounts"
+BANNER = "2026-09-trula-two-pc-music"
 UA = {"User-Agent": "cs2-donate-interact-updater", "Accept": "application/vnd.github+json"}
 CHECK_EVERY_SEC = 45 * 60
 
@@ -129,15 +129,9 @@ def bootstrap() -> None:
                 restart_process()
         except Exception as exc:
             print(f"автообновление пропущено: {exc}", flush=True)
-    access = cfg.get("access") or {}
-    if access.get("enabled", True):
-        from src.login_app import run_login
+    from src.app import run
 
-        run_login()
-    else:
-        from src.app import run
-
-        run()
+    run()
 
 
 def check_and_apply(apply: bool = True, on_status=None) -> UpdateResult:
